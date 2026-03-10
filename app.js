@@ -3,7 +3,7 @@ const earthRadiusKm = 6371;
 const IST_TIME_ZONE = "Asia/Kolkata";
 const WORLD_ATLAS_PATH = "vendor/countries-110m.json";
 const GLOBE_GRATICULE_STEP = 15;
-const API_STATE_PATH = "/api/state";
+const API_STATE_PATH = "http://127.0.0.1:5000/api/state";
 const REMOTE_SYNC_DELAY_MS = 350;
 
 const regionOptions = [
