@@ -1,36 +1,5 @@
 const MAX_CHANGE_ALERTS = 25;
 
-const SCHEMA_SQL = [
-  `CREATE TABLE IF NOT EXISTS satellites (
-    id TEXT PRIMARY KEY,
-    sort_index INTEGER NOT NULL,
-    payload_json TEXT NOT NULL
-  );`,
-  "CREATE INDEX IF NOT EXISTS idx_satellites_sort_index ON satellites(sort_index);",
-  `CREATE TABLE IF NOT EXISTS launches (
-    id TEXT PRIMARY KEY,
-    sort_index INTEGER NOT NULL,
-    payload_json TEXT NOT NULL
-  );`,
-  "CREATE INDEX IF NOT EXISTS idx_launches_sort_index ON launches(sort_index);",
-  `CREATE TABLE IF NOT EXISTS catastrophes (
-    id TEXT PRIMARY KEY,
-    sort_index INTEGER NOT NULL,
-    payload_json TEXT NOT NULL
-  );`,
-  "CREATE INDEX IF NOT EXISTS idx_catastrophes_sort_index ON catastrophes(sort_index);",
-  `CREATE TABLE IF NOT EXISTS change_alerts (
-    id TEXT PRIMARY KEY,
-    sort_index INTEGER NOT NULL,
-    payload_json TEXT NOT NULL
-  );`,
-  "CREATE INDEX IF NOT EXISTS idx_change_alerts_sort_index ON change_alerts(sort_index);",
-  `CREATE TABLE IF NOT EXISTS app_settings (
-    key TEXT PRIMARY KEY,
-    value_json TEXT NOT NULL
-  );`
-];
-
 function createDefaultState() {
   return {
     nextId: 1001,
@@ -93,10 +62,6 @@ function parseJsonValue(rawValue, fallbackValue) {
   }
 }
 
-async function ensureSchema(db) {
-  await db.exec(SCHEMA_SQL.join("\n"));
-}
-
 async function readCollection(db, tableName) {
   const result = await db.prepare(`SELECT payload_json FROM ${tableName} ORDER BY sort_index ASC`).all();
 
@@ -106,13 +71,11 @@ async function readCollection(db, tableName) {
 }
 
 async function readState(db) {
-  const [satellites, launches, catastrophes, changeAlerts, settingsResult] = await Promise.all([
-    readCollection(db, "satellites"),
-    readCollection(db, "launches"),
-    readCollection(db, "catastrophes"),
-    readCollection(db, "change_alerts"),
-    db.prepare("SELECT key, value_json FROM app_settings").all()
-  ]);
+  const satellites = await readCollection(db, "satellites");
+  const launches = await readCollection(db, "launches");
+  const catastrophes = await readCollection(db, "catastrophes");
+  const changeAlerts = await readCollection(db, "change_alerts");
+  const settingsResult = await db.prepare("SELECT key, value_json FROM app_settings").all();
 
   const settings = Object.fromEntries(
     settingsResult.results.map((row) => [row.key, parseJsonValue(row.value_json, null)])
@@ -174,45 +137,45 @@ async function writeState(db, candidate) {
 }
 
 export async function onRequest(context) {
-  if (context.request.method === "OPTIONS") {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        Allow: "GET, PUT, POST, OPTIONS"
+  try {
+    if (context.request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          Allow: "GET, PUT, POST, OPTIONS"
+        }
+      });
+    }
+
+    const db = context.env.SPACE_PROJECT_DB;
+    if (!db) {
+      return jsonResponse({ error: "The SPACE_PROJECT_DB binding is missing." }, 500);
+    }
+
+    if (context.request.method === "GET") {
+      return jsonResponse(await readState(db));
+    }
+
+    if (context.request.method !== "PUT" && context.request.method !== "POST") {
+      return methodNotAllowed();
+    }
+
+    const payload = await context.request.json();
+    const state = await writeState(db, payload);
+    return jsonResponse({
+      ok: true,
+      counts: {
+        satellites: state.satellites.length,
+        launches: state.launches.length,
+        catastrophes: state.catastrophes.length,
+        changeAlerts: state.changeAlerts.length
       }
     });
-  }
-
-  const db = context.env.SPACE_PROJECT_DB;
-  if (!db) {
-    return jsonResponse({ error: "The SPACE_PROJECT_DB binding is missing." }, 500);
-  }
-
-  await ensureSchema(db);
-
-  if (context.request.method === "GET") {
-    return jsonResponse(await readState(db));
-  }
-
-  if (context.request.method !== "PUT" && context.request.method !== "POST") {
-    return methodNotAllowed();
-  }
-
-  let payload;
-  try {
-    payload = await context.request.json();
   } catch (error) {
-    return jsonResponse({ error: "The request body must be valid JSON." }, 400);
-  }
+    console.error("State API error", error);
 
-  const state = await writeState(db, payload);
-  return jsonResponse({
-    ok: true,
-    counts: {
-      satellites: state.satellites.length,
-      launches: state.launches.length,
-      catastrophes: state.catastrophes.length,
-      changeAlerts: state.changeAlerts.length
-    }
-  });
+    const message = error instanceof Error ? error.message : "The state API failed.";
+    const status = /json/i.test(message) ? 400 : 500;
+    return jsonResponse({ error: message }, status);
+  }
 }
