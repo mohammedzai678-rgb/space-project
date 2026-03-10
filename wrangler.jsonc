@@ -1,0 +1,14 @@
+{
+  "name": "space-project",
+  "compatibility_date": "2026-03-10",
+  "pages_build_output_dir": ".",
+  "d1_databases": [
+    {
+      "binding": "SPACE_PROJECT_DB",
+      "database_name": "space-project-db",
+      "database_id": "1054105b-bfcb-42b3-8c72-57f7a183acf4",
+      "preview_database_id": "space-project-db-preview",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

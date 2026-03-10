@@ -3,6 +3,8 @@ const earthRadiusKm = 6371;
 const IST_TIME_ZONE = "Asia/Kolkata";
 const WORLD_ATLAS_PATH = "vendor/countries-110m.json";
 const GLOBE_GRATICULE_STEP = 15;
+const API_STATE_PATH = "/api/state";
+const REMOTE_SYNC_DELAY_MS = 350;
 
 const regionOptions = [
   "North America",
@@ -92,6 +94,14 @@ const worldRegionPolygons = [
 ];
 
 const state = loadState();
+const persistence = {
+  apiAvailable: false,
+  initialised: false,
+  syncTimer: null,
+  syncInFlight: false,
+  lastSavedSerialised: "",
+  lastRemoteSerialised: ""
+};
 
 const form = document.getElementById("satellite-form");
 const satelliteTableBody = document.getElementById("satellite-table-body");
@@ -165,8 +175,8 @@ const globeState = {
   loadError: ""
 };
 
-function loadState() {
-  const fallback = {
+function createDefaultState() {
+  return {
     nextId: 1001,
     nextLaunchId: 1,
     nextCatastropheId: 1,
@@ -177,41 +187,180 @@ function loadState() {
     changeAlerts: [],
     theme: "dark"
   };
+}
 
+function normaliseSatellite(satellite) {
+  return {
+    ...satellite,
+    inclination: typeof satellite.inclination === "number" ? satellite.inclination : 0,
+    mission: satellite.mission || "Communication",
+    region: getWorldRegion(satellite.latitude, satellite.longitude)
+  };
+}
+
+function normaliseState(candidate) {
+  const fallback = createDefaultState();
+  if (!candidate || typeof candidate !== "object") {
+    return fallback;
+  }
+
+  const satellites = Array.isArray(candidate.satellites)
+    ? candidate.satellites.map(normaliseSatellite)
+    : fallback.satellites;
+
+  return {
+    nextId: typeof candidate.nextId === "number" ? candidate.nextId : fallback.nextId,
+    nextLaunchId: typeof candidate.nextLaunchId === "number" ? candidate.nextLaunchId : fallback.nextLaunchId,
+    nextCatastropheId: typeof candidate.nextCatastropheId === "number" ? candidate.nextCatastropheId : fallback.nextCatastropheId,
+    selectedSatelliteId: candidate.selectedSatelliteId || satellites[0]?.id || fallback.selectedSatelliteId,
+    satellites,
+    launches: Array.isArray(candidate.launches) ? candidate.launches : fallback.launches,
+    catastrophes: Array.isArray(candidate.catastrophes) ? candidate.catastrophes : fallback.catastrophes,
+    changeAlerts: Array.isArray(candidate.changeAlerts) ? candidate.changeAlerts.slice(0, 25) : fallback.changeAlerts,
+    theme: candidate.theme === "light" ? "light" : "dark"
+  };
+}
+
+function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return fallback;
-
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed.satellites) || typeof parsed.nextId !== "number") {
-      return fallback;
+    if (!raw) {
+      return createDefaultState();
     }
 
-    const satellites = parsed.satellites.map((satellite) => ({
-      ...satellite,
-      inclination: typeof satellite.inclination === "number" ? satellite.inclination : 0,
-      mission: satellite.mission || "Communication",
-      region: getWorldRegion(satellite.latitude, satellite.longitude)
-    }));
-
-    return {
-      nextId: parsed.nextId,
-      nextLaunchId: typeof parsed.nextLaunchId === "number" ? parsed.nextLaunchId : fallback.nextLaunchId,
-      nextCatastropheId: typeof parsed.nextCatastropheId === "number" ? parsed.nextCatastropheId : fallback.nextCatastropheId,
-      selectedSatelliteId: parsed.selectedSatelliteId || satellites[0]?.id || fallback.selectedSatelliteId,
-      satellites,
-      launches: Array.isArray(parsed.launches) ? parsed.launches : [],
-      catastrophes: Array.isArray(parsed.catastrophes) ? parsed.catastrophes : [],
-      changeAlerts: Array.isArray(parsed.changeAlerts) ? parsed.changeAlerts.slice(0, 25) : [],
-      theme: parsed.theme === "light" ? "light" : "dark"
-    };
+    return normaliseState(JSON.parse(raw));
   } catch (error) {
-    return fallback;
+    return createDefaultState();
   }
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+function getSerializableState() {
+  return {
+    nextId: state.nextId,
+    nextLaunchId: state.nextLaunchId,
+    nextCatastropheId: state.nextCatastropheId,
+    selectedSatelliteId: state.selectedSatelliteId,
+    satellites: state.satellites,
+    launches: state.launches,
+    catastrophes: state.catastrophes,
+    changeAlerts: state.changeAlerts.slice(0, 25),
+    theme: state.theme
+  };
+}
+
+function replaceState(nextState) {
+  Object.assign(state, normaliseState(nextState));
+}
+
+function hasStoredActivity(candidate) {
+  return Boolean(
+    candidate.satellites.length ||
+    candidate.launches.length ||
+    candidate.catastrophes.length ||
+    candidate.changeAlerts.length ||
+    candidate.selectedSatelliteId ||
+    candidate.theme !== "dark" ||
+    candidate.nextId !== 1001 ||
+    candidate.nextLaunchId !== 1 ||
+    candidate.nextCatastropheId !== 1
+  );
+}
+
+function saveState(options = {}) {
+  const serialisedState = JSON.stringify(getSerializableState());
+
+  if (serialisedState !== persistence.lastSavedSerialised) {
+    localStorage.setItem(STORAGE_KEY, serialisedState);
+    persistence.lastSavedSerialised = serialisedState;
+  }
+
+  if (!options.skipRemote && persistence.apiAvailable && persistence.initialised) {
+    queueRemoteSync(serialisedState);
+  }
+}
+
+async function pushStateToApi(serialisedState) {
+  if (!persistence.apiAvailable || persistence.syncInFlight) {
+    return;
+  }
+
+  persistence.syncInFlight = true;
+
+  try {
+    const response = await fetch(API_STATE_PATH, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: serialisedState
+    });
+
+    if (!response.ok) {
+      throw new Error(`Cloud sync failed with status ${response.status}.`);
+    }
+
+    persistence.lastRemoteSerialised = serialisedState;
+  } catch (error) {
+    persistence.apiAvailable = false;
+    console.error(error);
+  } finally {
+    persistence.syncInFlight = false;
+    const latestSerialisedState = JSON.stringify(getSerializableState());
+    if (persistence.apiAvailable && latestSerialisedState !== persistence.lastRemoteSerialised) {
+      queueRemoteSync(latestSerialisedState);
+    }
+  }
+}
+
+function queueRemoteSync(serialisedState = JSON.stringify(getSerializableState())) {
+  if (serialisedState === persistence.lastRemoteSerialised) {
+    return;
+  }
+
+  if (persistence.syncTimer) {
+    window.clearTimeout(persistence.syncTimer);
+  }
+
+  persistence.syncTimer = window.setTimeout(() => {
+    persistence.syncTimer = null;
+    pushStateToApi(serialisedState);
+  }, REMOTE_SYNC_DELAY_MS);
+}
+
+async function hydrateStateFromApi() {
+  try {
+    const response = await fetch(API_STATE_PATH, {
+      headers: {
+        Accept: "application/json"
+      },
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    persistence.apiAvailable = true;
+
+    const remoteState = normaliseState(await response.json());
+    const localState = normaliseState(getSerializableState());
+    const remoteHasActivity = hasStoredActivity(remoteState);
+    const localHasActivity = hasStoredActivity(localState);
+
+    if (remoteHasActivity || !localHasActivity) {
+      replaceState(remoteState);
+      persistence.lastRemoteSerialised = JSON.stringify(getSerializableState());
+      saveState({ skipRemote: true });
+      render();
+      return;
+    }
+
+    queueRemoteSync(JSON.stringify(localState));
+  } catch (error) {
+    persistence.apiAvailable = false;
+  } finally {
+    persistence.initialised = true;
+  }
 }
 
 function applyTheme(theme) {
@@ -1780,9 +1929,14 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-populateRegionOptions();
-updateDetectedRegion();
-startIstClock();
-loadGlobeGeometry();
-animateGlobe();
-render();
+async function initialiseApp() {
+  populateRegionOptions();
+  updateDetectedRegion();
+  startIstClock();
+  loadGlobeGeometry();
+  animateGlobe();
+  render();
+  await hydrateStateFromApi();
+}
+
+initialiseApp();
