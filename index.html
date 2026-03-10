@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Airspace Traffic Optimization</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">AI Airspace Tracker</p>
+        <h1>Airspace Traffic Optimisation for Live Orbital and Traffic Monitoring</h1>
+        <p class="hero-text">
+          Monitor live traffic positions on a 3D globe, detect conflict risk, track parameter changes,
+          and surface the operational features needed for a modern airspace and UTM-style control console.
+        </p>
+        <div class="hero-metrics">
+          <article>
+            <span id="metric-total">0</span>
+            <p>Tracked Satellites</p>
+          </article>
+          <article>
+            <span id="metric-crowded">0</span>
+            <p>Crowded Regions</p>
+          </article>
+          <article>
+            <span id="metric-alerts">0</span>
+            <p>Live Alerts</p>
+          </article>
+        </div>
+        <div id="hero-highlights" class="hero-highlights"></div>
+      </div>
+      <div class="planet-panel">
+        <div class="planet-stage">
+          <canvas id="globe-canvas" class="globe-canvas" width="720" height="720"></canvas>
+          <button id="globe-info-trigger" class="globe-info-trigger" type="button">Viewer Info</button>
+          <div id="globe-tooltip" class="globe-tooltip hidden" aria-hidden="true"></div>
+        </div>
+        <div class="cover-caption">
+          <h2>Satellite Location Around Earth</h2>
+          <p id="globe-status">Loading the country-outline globe with latitude and longitude lines.</p>
+        </div>
+        <div id="cover-signal-grid" class="cover-signal-grid"></div>
+      </div>
+    </header>
+
+    <main class="dashboard">
+      <aside class="left-rail">
+        <section class="panel control-panel">
+          <div class="panel-header">
+            <p class="eyebrow">Control Panel</p>
+            <h2>System Controls</h2>
+          </div>
+          <div class="control-grid" aria-live="polite">
+            <article class="control-stat">
+              <h3 class="control-row-title">Day</h3>
+              <strong id="ist-clock-day" class="control-value">Loading...</strong>
+            </article>
+            <article class="control-stat">
+              <h3 class="control-row-title">Date</h3>
+              <strong id="ist-clock-date" class="control-value">Loading...</strong>
+            </article>
+            <article class="control-stat">
+              <h3 class="control-row-title">Time</h3>
+              <strong id="ist-clock-time" class="control-value">--:--:--</strong>
+            </article>
+            <article class="control-stat control-stat-theme">
+              <h3 class="control-row-title">Theme Colour</h3>
+              <button id="theme-toggle" class="secondary-btn control-theme-btn" type="button">Change Colour Theme</button>
+            </article>
+          </div>
+          <div class="control-subheader">
+            <p class="eyebrow">Corridors</p>
+            <h3>Named Corridors</h3>
+          </div>
+          <div id="corridor-list" class="corridor-list" aria-label="Named corridors"></div>
+        </section>
+
+        <section class="panel form-panel" id="feature-entry">
+          <div class="panel-header">
+            <p class="eyebrow">Data Entry</p>
+            <h2>Add Satellite</h2>
+          </div>
+          <form id="satellite-form" class="satellite-form">
+            <div class="field-grid">
+              <label>
+                <span>Satellite name</span>
+                <input type="text" id="sat-name" required placeholder="Aurora Net-7">
+              </label>
+              <label>
+                <span>Operator</span>
+                <input type="text" id="sat-operator" required placeholder="Orbital Dynamics">
+              </label>
+              <label>
+                <span>Latitude</span>
+                <input type="number" id="sat-lat" min="-90" max="90" step="0.01" required placeholder="12.50">
+              </label>
+              <label>
+                <span>Longitude</span>
+                <input type="number" id="sat-lon" min="-180" max="180" step="0.01" required placeholder="78.30">
+              </label>
+              <label>
+                <span>Altitude (km)</span>
+                <input type="number" id="sat-alt" min="100" max="50000" step="1" required placeholder="540">
+              </label>
+              <label>
+                <span>Velocity (km/s)</span>
+                <input type="number" id="sat-velocity" min="0" max="20" step="0.01" required placeholder="7.65">
+              </label>
+              <label>
+                <span>Region</span>
+                <select id="sat-region" required>
+                  <option value="">Select region</option>
+                </select>
+              </label>
+              <label>
+                <span>Status</span>
+                <select id="sat-status" required>
+                  <option value="Operational">Operational</option>
+                  <option value="Monitoring">Monitoring</option>
+                  <option value="Maintenance">Maintenance</option>
+                </select>
+              </label>
+              <label>
+                <span>Inclination (deg)</span>
+                <input type="number" id="sat-inclination" min="0" max="180" step="0.1" required placeholder="53.2">
+              </label>
+              <label>
+                <span>Mission type</span>
+                <select id="sat-mission" required>
+                  <option value="Communication">Communication</option>
+                  <option value="Navigation">Navigation</option>
+                  <option value="Observation">Observation</option>
+                  <option value="Defense">Defense</option>
+                </select>
+              </label>
+            </div>
+            <button type="submit" class="primary-btn">Save or Update Satellite</button>
+          </form>
+          <p class="form-note">Submitting the same satellite name updates its parameters and logs any detected changes.</p>
+        </section>
+
+        <section class="panel inspector-panel">
+          <div class="panel-header">
+            <p class="eyebrow">Selected Unit</p>
+            <h2>Satellite Inspector</h2>
+          </div>
+          <div id="selected-satellite-card" class="selected-card"></div>
+        </section>
+      </aside>
+
+      <section class="main-grid">
+        <section class="panel summary-panel" id="feature-overview">
+          <div class="panel-header">
+            <p class="eyebrow">Mission Summary</p>
+            <h2>Optimization Snapshot</h2>
+          </div>
+          <div id="overview-cards" class="overview-cards"></div>
+          <div class="analytics-grid">
+            <article class="chart-card">
+              <div class="chart-header">
+                <h3>Region Traffic</h3>
+                <p>Active satellites per orbital corridor</p>
+              </div>
+              <div id="region-chart" class="bar-chart"></div>
+            </article>
+            <article class="chart-card">
+              <div class="chart-header">
+                <h3>Altitude Bands</h3>
+                <p>Low, medium and high orbit distribution</p>
+              </div>
+              <div id="altitude-chart" class="band-chart"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel detail-panel" id="feature-details">
+          <div class="panel-header">
+            <p class="eyebrow">Satellite Registry</p>
+            <h2>All Satellite Details</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Operator</th>
+                  <th>Mission</th>
+                  <th>Region</th>
+                  <th>Altitude</th>
+                  <th>Status</th>
+                  <th>Risk</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="satellite-table-body"></tbody>
+            </table>
+          </div>
+          <div class="panel-actions">
+            <button id="clear-satellites" class="secondary-btn danger" type="button">Clear Satellite Registry</button>
+          </div>
+        </section>
+
+        <section class="panel distances-panel" id="feature-distances">
+          <div class="panel-header">
+            <p class="eyebrow">Proximity Scan</p>
+            <h2>Distance from Nearby Satellites</h2>
+          </div>
+          <div id="distance-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel crowded-panel" id="feature-crowding">
+          <div class="panel-header">
+            <p class="eyebrow">Congestion Analysis</p>
+            <h2>Why a Region Is Crowded</h2>
+          </div>
+          <div id="crowding-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel risk-panel" id="feature-risk">
+          <div class="panel-header">
+            <p class="eyebrow">AI Safety</p>
+            <h2>Crash Detection Alerts</h2>
+          </div>
+          <div id="risk-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel change-panel" id="feature-changes">
+          <div class="panel-header">
+            <p class="eyebrow">Change Tracking</p>
+            <h2>Altitude and Parameter Alerts</h2>
+          </div>
+          <div class="panel-actions">
+            <button id="clear-change-alerts" class="secondary-btn danger" type="button">Clear Change Alerts</button>
+          </div>
+          <div id="change-alert-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel operations-panel" id="feature-operations">
+          <div class="panel-header">
+            <p class="eyebrow">Priority Queue</p>
+            <h2>Operational Watchlist</h2>
+          </div>
+          <div id="operations-watchlist" class="stack-list"></div>
+        </section>
+
+        <section class="panel timeline-panel">
+          <div class="panel-header">
+            <p class="eyebrow">Traffic Pattern</p>
+            <h2>Busiest Regions</h2>
+          </div>
+          <p id="timeline-summary" class="timeline-summary"></p>
+          <div id="timeline-chart" class="stack-list"></div>
+        </section>
+
+        <section class="panel launch-panel" id="feature-launches">
+          <div class="panel-header">
+            <p class="eyebrow">Launch Queue</p>
+            <h2>Future Launch Tracker</h2>
+          </div>
+          <form id="launch-form" class="satellite-form">
+            <div class="field-grid">
+              <label>
+                <span>Satellite name</span>
+                <input type="text" id="launch-name" required placeholder="Aurora Net-8">
+              </label>
+              <label>
+                <span>Operator</span>
+                <input type="text" id="launch-operator" required placeholder="Orbital Dynamics">
+              </label>
+              <label>
+                <span>Launch date</span>
+                <input type="date" id="launch-date" required>
+              </label>
+              <label>
+                <span>Launch site</span>
+                <input type="text" id="launch-site" required placeholder="Sriharikota">
+              </label>
+              <label>
+                <span>Region</span>
+                <select id="launch-region" required>
+                  <option value="">Select region</option>
+                </select>
+              </label>
+              <label>
+                <span>Mission type</span>
+                <select id="launch-mission" required>
+                  <option value="Communication">Communication</option>
+                  <option value="Navigation">Navigation</option>
+                  <option value="Observation">Observation</option>
+                  <option value="Defense">Defense</option>
+                </select>
+              </label>
+            </div>
+            <button type="submit" class="primary-btn">Add Future Launch</button>
+          </form>
+          <div class="panel-actions">
+            <button id="clear-launches" class="secondary-btn danger" type="button">Clear Launch Tracker</button>
+          </div>
+          <div id="launch-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel news-panel">
+          <div class="panel-header news-panel-header">
+            <div>
+              <p class="eyebrow">Mission Feed</p>
+              <h2>Space News Feed</h2>
+            </div>
+            <p class="news-panel-note">Live updates from launches, alerts and incident logs</p>
+          </div>
+          <div id="cover-news-feed" class="news-feed-list"></div>
+        </section>
+
+        <section class="panel catastrophe-panel" id="feature-catastrophes">
+          <div class="panel-header">
+            <p class="eyebrow">Incident Watch</p>
+            <h2>Space Catastrophes Tracker</h2>
+          </div>
+          <form id="catastrophe-form" class="satellite-form">
+            <div class="field-grid">
+              <label>
+                <span>Event name</span>
+                <input type="text" id="catastrophe-name" required placeholder="Debris Fragmentation Event">
+              </label>
+              <label>
+                <span>Date</span>
+                <input type="date" id="catastrophe-date" required>
+              </label>
+              <label>
+                <span>Type</span>
+                <select id="catastrophe-type" required>
+                  <option value="Collision">Collision</option>
+                  <option value="Debris Field">Debris Field</option>
+                  <option value="Fragmentation">Fragmentation</option>
+                  <option value="Solar Storm">Solar Storm</option>
+                  <option value="Communication Loss">Communication Loss</option>
+                  <option value="Re-entry Hazard">Re-entry Hazard</option>
+                </select>
+              </label>
+              <label>
+                <span>Severity</span>
+                <select id="catastrophe-severity" required>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+              <label class="field-span-2">
+                <span>Notes</span>
+                <textarea id="catastrophe-notes" required placeholder="Describe the event, affected assets and expected operational impact."></textarea>
+              </label>
+            </div>
+            <button type="submit" class="primary-btn">Add Catastrophe Entry</button>
+          </form>
+          <div class="panel-actions">
+            <button id="clear-catastrophes" class="secondary-btn danger" type="button">Clear Catastrophe Tracker</button>
+          </div>
+          <div id="catastrophe-list" class="stack-list"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div id="globe-modal" class="modal-shell hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="globe-modal-title">
+      <button id="globe-modal-close" class="modal-close" type="button" aria-label="Close viewer info">Close</button>
+      <p class="eyebrow">3D Globe Viewer</p>
+      <h2 id="globe-modal-title">Viewer Guidance</h2>
+      <div id="globe-modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="vendor/d3-array.min.js"></script>
+  <script src="vendor/d3-geo.min.js"></script>
+  <script src="vendor/topojson-client.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
