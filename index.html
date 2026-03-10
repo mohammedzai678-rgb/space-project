@@ -398,6 +398,21 @@
       </form>
     </section>
   </div>
+  <div id="ai-chat-wrapper" class="chat-minimized">
+  <button id="chat-toggle-btn" type="button">🛰️ Ask Mission Control</button>
+  <div id="chat-window" class="hidden">
+    <div class="chat-header">
+      <strong>Orbital AI Assistant</strong>
+    </div>
+    <div id="chat-history">
+      <p class="bot-msg">System Online. How can I help with airspace optimization today?</p>
+    </div>
+    <form id="chat-form">
+      <input type="text" id="chat-input" placeholder="Type a command..." autocomplete="off">
+      <button type="submit">Send</button>
+    </form>
+  </div>
+</div>
   <script src="vendor/d3-array.min.js"></script>
   <script src="vendor/d3-geo.min.js"></script>
   <script src="vendor/topojson-client.min.js"></script>

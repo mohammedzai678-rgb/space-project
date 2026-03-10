@@ -10,12 +10,10 @@ const DEFAULT_CHAT_QUESTIONS = [
   "Is live API tracking connected?"
 ];
 
+
 const chatWrapper = document.getElementById("ai-chat-wrapper");
-const chatToggle = document.getElementById("chat-toggle-btn");
-const chatWindow = document.getElementById("chat-window");
-const chatForm = document.getElementById("chat-form");
 const chatQuestionSelect = document.getElementById("chat-question-select");
-const chatHistory = document.getElementById("chat-history");
+
 
 if (chatWrapper && chatToggle && chatWindow && chatForm && chatQuestionSelect && chatHistory) {
   restoreChatPosition();
@@ -29,10 +27,10 @@ function setupToggleDrag() {
   let moved = false;
   let startX = 0;
   let startY = 0;
-  let pointerId = null;
+  let pointerId = null
 
   chatToggle.addEventListener("pointerdown", (event) => {
-    dragging = true;
+    dragging = true;K
     moved = false;
     startX = event.clientX;
     startY = event.clientY;
@@ -250,3 +248,27 @@ function escapeHtml(value) {
     "'": "&#39;"
   }[char]));
 }
+const chatToggle = document.getElementById('chat-toggle-btn');
+const chatWindow = document.getElementById('chat-window');
+const chatForm = document.getElementById('chat-form');
+const chatInput = document.getElementById('chat-input');
+const chatHistory = document.getElementById('chat-history');
+
+chatToggle.onclick = () => chatWindow.classList.toggle('hidden');
+
+chatForm.onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = chatInput.value;
+  chatHistory.innerHTML += `<p class="user-msg">${msg}</p>`;
+  chatInput.value = '';
+
+  const res = await fetch('http://127.0.0.1:5000/api/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ message: msg })
+  });
+  const data = await res.json();
+  chatHistory.innerHTML += `<p class="bot-msg">${data.response}</p>`;
+  chatHistory.scrollTop = chatHistory.scrollHeight;
+};
+
