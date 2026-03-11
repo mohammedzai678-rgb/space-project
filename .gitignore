@@ -1,6 +1,12 @@
 *.log
 *.out
 *.err
+*.pyc
+__pycache__/
+.env
+.env.*
+.dev.vars
+.dev.vars.*
 node_modules/
 .wrangler/
 .DS_Store

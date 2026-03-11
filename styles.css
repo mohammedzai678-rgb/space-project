@@ -888,6 +888,73 @@ tbody tr:hover {
   gap: 14px;
 }
 
+.chatbot-thread {
+  display: grid;
+  gap: 12px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.chatbot-form {
+  margin-top: 16px;
+}
+
+.chatbot-actions {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chatbot-actions .form-note {
+  margin: 0;
+  max-width: 48ch;
+}
+
+.chatbot-message {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chatbot-message.user {
+  background: linear-gradient(135deg, rgba(28, 183, 255, 0.2), rgba(25, 93, 136, 0.18));
+}
+
+.chatbot-message.assistant {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+}
+
+.chatbot-role {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.chatbot-message p:last-child {
+  margin: 0;
+}
+
+.chatbot-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chatbot-suggestion {
+  width: auto;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(141, 198, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
 .api-result-list {
   margin-top: 14px;
   max-height: 320px;

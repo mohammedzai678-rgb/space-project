@@ -3,7 +3,9 @@ const earthRadiusKm = 6371;
 const IST_TIME_ZONE = "Asia/Kolkata";
 const WORLD_ATLAS_PATH = "vendor/countries-110m.json";
 const GLOBE_GRATICULE_STEP = 15;
-const API_STATE_PATH = "http://127.0.0.1:5000/api/state";
+const LOCAL_PYTHON_API_BASE_PATH = "http://127.0.0.1:5000/api";
+const API_STATE_PATH = resolveApiPath("state");
+const API_CHAT_PATH = resolveApiPath("chat");
 const REMOTE_SYNC_DELAY_MS = 350;
 
 const regionOptions = [
@@ -30,6 +32,20 @@ function createPolygon(coordinates) {
     type: "Polygon",
     coordinates: [coordinates]
   };
+}
+
+function resolveApiPath(resource) {
+  if (typeof window === "undefined") {
+    return `${LOCAL_PYTHON_API_BASE_PATH}/${resource}`;
+  }
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const apiOverride = searchParams.get("api");
+  if (apiOverride) {
+    return apiOverride.replace(/\/state(?:\?.*)?$/i, `/${resource}`);
+  }
+
+  return `/api/${resource}`;
 }
 
 function createMultiPolygon(polygons) {
@@ -102,6 +118,16 @@ const persistence = {
   lastSavedSerialised: "",
   lastRemoteSerialised: ""
 };
+const chatbotState = {
+  sending: false,
+  messages: [
+    {
+      role: "assistant",
+      content: "Mission assistant online. Gemini will answer when it is configured. Ask about collision risk, busy regions, launches, incidents, or a satellite by name.",
+      suggestions: ["Show collision risk", "Which region is busiest?", "Summarise launches"]
+    }
+  ]
+};
 
 const form = document.getElementById("satellite-form");
 const satelliteTableBody = document.getElementById("satellite-table-body");
@@ -146,6 +172,11 @@ const launchRegionInput = document.getElementById("launch-region");
 const satelliteForm = document.getElementById("satellite-form");
 const launchForm = document.getElementById("launch-form");
 const catastropheForm = document.getElementById("catastrophe-form");
+const chatbotThread = document.getElementById("chatbot-thread");
+const chatbotForm = document.getElementById("chatbot-form");
+const chatbotInput = document.getElementById("chatbot-input");
+const chatbotStatus = document.getElementById("chatbot-status");
+const chatbotSendButton = document.getElementById("chatbot-send");
 
 const worldRegions = [
   { name: "North America", latMin: 15, latMax: 85, lonMin: -170, lonMax: -50 },
@@ -248,6 +279,99 @@ function getSerializableState() {
   };
 }
 
+function createChatMessage(role, content, suggestions = []) {
+  return {
+    role,
+    content,
+    suggestions: Array.isArray(suggestions) ? suggestions : []
+  };
+}
+
+function getChatHistoryPayload() {
+  return chatbotState.messages
+    .slice(-8)
+    .map((message) => ({
+      role: message.role,
+      content: message.content
+    }));
+}
+
+function renderChatbot() {
+  if (!chatbotThread) {
+    return;
+  }
+
+  chatbotThread.innerHTML = chatbotState.messages.map((message) => `
+    <article class="chatbot-message ${escapeHtml(message.role)}">
+      <p class="chatbot-role">${message.role === "assistant" ? "Mission Assistant" : "Operator"}</p>
+      <p>${escapeHtml(message.content)}</p>
+      ${message.role === "assistant" && message.suggestions?.length ? `
+        <div class="chatbot-suggestions">
+          ${message.suggestions.map((suggestion) => `
+            <button class="chatbot-suggestion" data-chatbot-suggestion="${escapeHtml(suggestion)}" type="button">${escapeHtml(suggestion)}</button>
+          `).join("")}
+        </div>
+      ` : ""}
+    </article>
+  `).join("");
+
+  chatbotThread.scrollTop = chatbotThread.scrollHeight;
+
+  if (chatbotStatus) {
+    chatbotStatus.textContent = chatbotState.sending
+      ? "Mission assistant is analysing the current orbital state..."
+      : "The chatbot uses Gemini when GEMINI_API_KEY is configured and always includes the current mission state.";
+  }
+
+  if (chatbotSendButton) {
+    chatbotSendButton.disabled = chatbotState.sending;
+    chatbotSendButton.textContent = chatbotState.sending ? "Analysing..." : "Ask Mission Assistant";
+  }
+}
+
+async function sendChatPrompt(prompt) {
+  const trimmedPrompt = prompt.trim();
+  if (!trimmedPrompt || chatbotState.sending) {
+    return;
+  }
+
+  const history = getChatHistoryPayload();
+  chatbotState.messages.push(createChatMessage("user", trimmedPrompt));
+  chatbotState.sending = true;
+  renderChatbot();
+
+  try {
+    const response = await fetch(API_CHAT_PATH, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: JSON.stringify({
+        message: trimmedPrompt,
+        state: getSerializableState(),
+        history
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Chat request failed with status ${response.status}.`);
+    }
+
+    const payload = await response.json();
+    chatbotState.messages.push(
+      createChatMessage("assistant", payload.reply || "No response received.", payload.suggestions || [])
+    );
+  } catch (error) {
+    chatbotState.messages.push(
+      createChatMessage("assistant", "The chatbot is unavailable right now. Check the backend and try again.")
+    );
+  } finally {
+    chatbotState.sending = false;
+    renderChatbot();
+  }
+}
+
 function replaceState(nextState) {
   Object.assign(state, normaliseState(nextState));
 }
@@ -299,7 +423,18 @@ async function pushStateToApi(serialisedState) {
       throw new Error(`Cloud sync failed with status ${response.status}.`);
     }
 
-    persistence.lastRemoteSerialised = serialisedState;
+    const remoteState = normaliseState(await response.json());
+    const latestLocalSerialisedState = JSON.stringify(getSerializableState());
+
+    if (latestLocalSerialisedState === serialisedState) {
+      replaceState(remoteState);
+      persistence.lastRemoteSerialised = JSON.stringify(getSerializableState());
+      saveState({ skipRemote: true });
+      render();
+      return;
+    }
+
+    persistence.lastRemoteSerialised = JSON.stringify(remoteState);
   } catch (error) {
     persistence.apiAvailable = false;
     console.error(error);
@@ -1667,6 +1802,7 @@ function render() {
   renderLaunches();
   renderCatastrophes();
   renderGlobeModal(analysis);
+  renderChatbot();
   applyTheme(state.theme);
   saveState();
 }
@@ -1863,6 +1999,12 @@ document.addEventListener("click", (event) => {
   const deleteCatastropheButton = event.target.closest("[data-delete-catastrophe]");
   if (deleteCatastropheButton) {
     deleteCatastropheById(deleteCatastropheButton.dataset.deleteCatastrophe);
+    return;
+  }
+
+  const chatbotSuggestionButton = event.target.closest("[data-chatbot-suggestion]");
+  if (chatbotSuggestionButton) {
+    void sendChatPrompt(chatbotSuggestionButton.dataset.chatbotSuggestion || "");
   }
 });
 
@@ -1870,6 +2012,19 @@ clearSatellitesButton.addEventListener("click", clearSatelliteRegistry);
 clearChangeAlertsButton.addEventListener("click", clearChangeAlerts);
 clearLaunchesButton.addEventListener("click", clearLaunchTracker);
 clearCatastrophesButton.addEventListener("click", clearCatastropheTracker);
+
+if (chatbotForm) {
+  chatbotForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const prompt = chatbotInput.value.trim();
+    if (!prompt) {
+      return;
+    }
+
+    chatbotInput.value = "";
+    await sendChatPrompt(prompt);
+  });
+}
 
 globeCanvas.addEventListener("pointerdown", (event) => {
   globeState.dragging = true;

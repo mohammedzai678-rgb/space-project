@@ -1,6 +1,21 @@
 const MAX_CHANGE_ALERTS = 25;
+const BACKEND_ALERT_SOURCE = "python-backend";
+const EARTH_RADIUS_KM = 6371.0;
+const HIGH_RISK_DISTANCE_KM = 75.0;
+const MEDIUM_RISK_DISTANCE_KM = 180.0;
+const SCHEMA_STATEMENTS = [
+  "CREATE TABLE IF NOT EXISTS satellites (id TEXT PRIMARY KEY, sort_index INTEGER NOT NULL, payload_json TEXT NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_satellites_sort_index ON satellites(sort_index)",
+  "CREATE TABLE IF NOT EXISTS launches (id TEXT PRIMARY KEY, sort_index INTEGER NOT NULL, payload_json TEXT NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_launches_sort_index ON launches(sort_index)",
+  "CREATE TABLE IF NOT EXISTS catastrophes (id TEXT PRIMARY KEY, sort_index INTEGER NOT NULL, payload_json TEXT NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_catastrophes_sort_index ON catastrophes(sort_index)",
+  "CREATE TABLE IF NOT EXISTS change_alerts (id TEXT PRIMARY KEY, sort_index INTEGER NOT NULL, payload_json TEXT NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_change_alerts_sort_index ON change_alerts(sort_index)",
+  "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)"
+];
 
-function createDefaultState() {
+export function createDefaultState() {
   return {
     nextId: 1001,
     nextLaunchId: 1,
@@ -14,7 +29,7 @@ function createDefaultState() {
   };
 }
 
-function normaliseState(candidate) {
+export function normaliseState(candidate) {
   const fallback = createDefaultState();
   if (!candidate || typeof candidate !== "object") {
     return fallback;
@@ -35,7 +50,7 @@ function normaliseState(candidate) {
   };
 }
 
-function jsonResponse(payload, status = 200) {
+export function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: {
@@ -45,7 +60,7 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
-function methodNotAllowed() {
+export function methodNotAllowed() {
   return new Response("Method Not Allowed", {
     status: 405,
     headers: {
@@ -60,6 +75,163 @@ function parseJsonValue(rawValue, fallbackValue) {
   } catch (error) {
     return fallbackValue;
   }
+}
+
+function getNumber(satellite, fieldName) {
+  const value = satellite?.[fieldName];
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function roundTo(value, digits = 2) {
+  return Number(value.toFixed(digits));
+}
+
+function formatPythonFloat(value) {
+  return Number.isInteger(value) ? value.toFixed(1) : String(value);
+}
+
+function toCartesian(satellite) {
+  const latitude = (getNumber(satellite, "latitude") * Math.PI) / 180;
+  const longitude = (getNumber(satellite, "longitude") * Math.PI) / 180;
+  const radius = EARTH_RADIUS_KM + getNumber(satellite, "altitude");
+
+  return {
+    x: radius * Math.cos(latitude) * Math.cos(longitude),
+    y: radius * Math.cos(latitude) * Math.sin(longitude),
+    z: radius * Math.sin(latitude)
+  };
+}
+
+function distanceKm(firstSatellite, secondSatellite) {
+  const firstPoint = toCartesian(firstSatellite);
+  const secondPoint = toCartesian(secondSatellite);
+
+  return Math.sqrt(
+    (firstPoint.x - secondPoint.x) ** 2 +
+    (firstPoint.y - secondPoint.y) ** 2 +
+    (firstPoint.z - secondPoint.z) ** 2
+  );
+}
+
+function classifyRisk(distance) {
+  if (distance < HIGH_RISK_DISTANCE_KM) {
+    return "high";
+  }
+
+  if (distance < MEDIUM_RISK_DISTANCE_KM) {
+    return "medium";
+  }
+
+  return "low";
+}
+
+function recommendedAltitudeAdjustmentKm(severity, altitudeGap) {
+  if (severity === "high") {
+    return Math.max(5, Math.round((20 - Math.min(altitudeGap, 20)) / 2));
+  }
+
+  if (severity === "medium") {
+    return 2;
+  }
+
+  return 0;
+}
+
+function analysePair(firstSatellite, secondSatellite) {
+  const distance = distanceKm(firstSatellite, secondSatellite);
+  const severity = classifyRisk(distance);
+  const altitudeGap = Math.abs(
+    getNumber(firstSatellite, "altitude") - getNumber(secondSatellite, "altitude")
+  );
+  const velocityGap = Math.abs(
+    getNumber(firstSatellite, "velocity") - getNumber(secondSatellite, "velocity")
+  );
+  const inclinationGap = Math.abs(
+    getNumber(firstSatellite, "inclination") - getNumber(secondSatellite, "inclination")
+  );
+
+  return {
+    satellites: [firstSatellite, secondSatellite],
+    distance_km: roundTo(distance),
+    altitude_gap_km: roundTo(altitudeGap),
+    velocity_gap_km_s: roundTo(velocityGap),
+    inclination_gap_deg: roundTo(inclinationGap),
+    severity,
+    recommended_altitude_adjustment_km: recommendedAltitudeAdjustmentKm(severity, altitudeGap)
+  };
+}
+
+export function detectConflicts(satellites) {
+  const conflicts = [];
+
+  satellites.forEach((firstSatellite, index) => {
+    satellites.slice(index + 1).forEach((secondSatellite) => {
+      const analysis = analysePair(firstSatellite, secondSatellite);
+      if (analysis.severity !== "low") {
+        conflicts.push(analysis);
+      }
+    });
+  });
+
+  conflicts.sort((left, right) => {
+    const severityOrder = { high: 0, medium: 1, low: 2 };
+
+    return (
+      severityOrder[left.severity] - severityOrder[right.severity] ||
+      left.distance_km - right.distance_km ||
+      left.altitude_gap_km - right.altitude_gap_km
+    );
+  });
+
+  return conflicts;
+}
+
+function buildBackendAlert(conflict) {
+  const [firstSatellite, secondSatellite] = conflict.satellites;
+  const severity = conflict.severity;
+  const pairKey = [
+    String(firstSatellite?.id || firstSatellite?.name || "unknown-a"),
+    String(secondSatellite?.id || secondSatellite?.name || "unknown-b")
+  ].sort().join("::");
+
+  return {
+    id: `${BACKEND_ALERT_SOURCE}::${pairKey}`,
+    satelliteId: firstSatellite?.id,
+    satelliteName: firstSatellite?.name || "Unknown satellite",
+    field: "Collision Risk",
+    severity,
+    title: severity === "high" ? "Critical Proximity" : "Traffic Advisory",
+    message: `${firstSatellite?.name || "Unknown"} and ${secondSatellite?.name || "Unknown"} are ${formatPythonFloat(conflict.distance_km)} km apart. Suggested altitude adjustment: ${conflict.recommended_altitude_adjustment_km} km.`,
+    timestamp: "Python backend analysis",
+    source: BACKEND_ALERT_SOURCE
+  };
+}
+
+function mergeChangeAlerts(existingAlerts, backendAlerts) {
+  const preservedAlerts = existingAlerts.filter((alert) => alert?.source !== BACKEND_ALERT_SOURCE);
+  return [...backendAlerts, ...preservedAlerts].slice(0, MAX_CHANGE_ALERTS);
+}
+
+export function processState(candidate) {
+  const state = normaliseState(candidate);
+  const conflicts = detectConflicts(state.satellites);
+  const backendAlerts = conflicts.map((conflict) => buildBackendAlert(conflict));
+
+  return {
+    ...state,
+    changeAlerts: mergeChangeAlerts(state.changeAlerts, backendAlerts),
+    backendInsights: {
+      engine: "python",
+      conflictCount: backendAlerts.length
+    }
+  };
+}
+
+async function ensureSchema(db) {
+  await db.batch(
+    SCHEMA_STATEMENTS.map((statement) => db.prepare(statement))
+  );
 }
 
 async function readCollection(db, tableName) {
@@ -81,7 +253,7 @@ async function readState(db) {
     settingsResult.results.map((row) => [row.key, parseJsonValue(row.value_json, null)])
   );
 
-  return normaliseState({
+  return processState({
     nextId: settings.nextId,
     nextLaunchId: settings.nextLaunchId,
     nextCatastropheId: settings.nextCatastropheId,
@@ -123,7 +295,7 @@ function replaceSettingsStatements(db, state) {
 }
 
 async function writeState(db, candidate) {
-  const state = normaliseState(candidate);
+  const state = processState(candidate);
   const statements = [
     ...replaceCollectionStatements(db, "satellites", state.satellites),
     ...replaceCollectionStatements(db, "launches", state.launches),
@@ -152,6 +324,8 @@ export async function onRequest(context) {
       return jsonResponse({ error: "The SPACE_PROJECT_DB binding is missing." }, 500);
     }
 
+    await ensureSchema(db);
+
     if (context.request.method === "GET") {
       return jsonResponse(await readState(db));
     }
@@ -162,15 +336,7 @@ export async function onRequest(context) {
 
     const payload = await context.request.json();
     const state = await writeState(db, payload);
-    return jsonResponse({
-      ok: true,
-      counts: {
-        satellites: state.satellites.length,
-        launches: state.launches.length,
-        catastrophes: state.catastrophes.length,
-        changeAlerts: state.changeAlerts.length
-      }
-    });
+    return jsonResponse(state);
   } catch (error) {
     console.error("State API error", error);
 

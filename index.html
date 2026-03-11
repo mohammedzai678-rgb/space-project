@@ -239,6 +239,27 @@
           <div id="change-alert-list" class="stack-list"></div>
         </section>
 
+        <section class="panel chatbot-panel capability-panel" id="feature-chatbot">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Mission Assistant</p>
+              <h2>Python Operations Chatbot</h2>
+            </div>
+            <p class="news-panel-note">Ask about collision risk, launches, incidents, or a satellite by name.</p>
+          </div>
+          <div id="chatbot-thread" class="chatbot-thread" aria-live="polite"></div>
+          <form id="chatbot-form" class="chatbot-form">
+            <label>
+              <span>Ask the assistant</span>
+              <textarea id="chatbot-input" rows="3" placeholder="Example: Which region is busiest right now?"></textarea>
+            </label>
+            <div class="panel-actions chatbot-actions">
+              <p id="chatbot-status" class="form-note">The chatbot uses the current mission state and Python backend analysis.</p>
+              <button id="chatbot-send" class="primary-btn" type="submit">Ask Mission Assistant</button>
+            </div>
+          </form>
+        </section>
+
         <section class="panel operations-panel" id="feature-operations">
           <div class="panel-header">
             <p class="eyebrow">Priority Queue</p>
