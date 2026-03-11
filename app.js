@@ -3,8 +3,106 @@ const earthRadiusKm = 6371;
 const IST_TIME_ZONE = "Asia/Kolkata";
 const WORLD_ATLAS_PATH = "vendor/countries-110m.json";
 const GLOBE_GRATICULE_STEP = 15;
-const API_STATE_PATH = "http://127.0.0.1:5000/api/state";
+const GLOBE_RADIUS_FACTOR = 0.41;
+const API_STATE_PATH = "/api/state";
+const API_FALLBACK_PORT = "5000";
 const REMOTE_SYNC_DELAY_MS = 350;
+const REMOTE_PULL_INTERVAL_MS = 12000;
+const API_STATE_ENDPOINTS = buildApiStateEndpoints(API_STATE_PATH);
+const GLOBE_LIBRARY_SOURCES = [
+  { key: "d3-array", local: "vendor/d3-array.min.js", cdn: "https://cdn.jsdelivr.net/npm/d3-array@3/dist/d3-array.min.js" },
+  { key: "d3-geo", local: "vendor/d3-geo.min.js", cdn: "https://cdn.jsdelivr.net/npm/d3-geo@3/dist/d3-geo.min.js" },
+  { key: "topojson-client", local: "vendor/topojson-client.min.js", cdn: "https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js" }
+];
+
+let globeLibraryLoadPromise = null;
+
+function buildApiStateEndpoints(path) {
+  const endpoints = [];
+  const normalisedPath = path.startsWith("/") ? path : `/${path}`;
+  const add = (url) => {
+    if (url && !endpoints.includes(url)) {
+      endpoints.push(url);
+    }
+  };
+
+  if (typeof window !== "undefined" && window.location) {
+    const { origin, protocol, hostname, port } = window.location;
+    if (origin && origin !== "null") {
+      add(`${origin}${normalisedPath}`);
+    }
+    if (hostname && port !== API_FALLBACK_PORT) {
+      const resolvedProtocol = protocol === "http:" || protocol === "https:" ? protocol : "http:";
+      add(`${resolvedProtocol}//${hostname}:${API_FALLBACK_PORT}${normalisedPath}`);
+    }
+  }
+
+  add(`http://127.0.0.1:${API_FALLBACK_PORT}${normalisedPath}`);
+  add(`http://localhost:${API_FALLBACK_PORT}${normalisedPath}`);
+
+  return endpoints;
+}
+
+function isGlobeLibraryReady() {
+  return Boolean(window.d3?.geoOrthographic && window.topojson?.feature);
+}
+
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    const existing = Array.from(document.querySelectorAll("script[src]"))
+      .find((script) => script.src === src || script.getAttribute("src") === src);
+
+    if (existing) {
+      if (existing.dataset.loaded === "true") {
+        resolve();
+        return;
+      }
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error(`Failed to load script: ${src}`)), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = () => {
+      script.dataset.loaded = "true";
+      resolve();
+    };
+    script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+    document.head.appendChild(script);
+  });
+}
+
+async function ensureGlobeLibrariesLoaded() {
+  if (isGlobeLibraryReady()) {
+    return true;
+  }
+
+  if (!globeLibraryLoadPromise) {
+    globeLibraryLoadPromise = (async () => {
+      for (const source of GLOBE_LIBRARY_SOURCES) {
+        if (isGlobeLibraryReady()) {
+          return true;
+        }
+        try {
+          await loadScriptOnce(source.local);
+        } catch (error) {
+          try {
+            await loadScriptOnce(source.cdn);
+          } catch (_cdnError) {
+            // Continue and let the final readiness check report failure.
+          }
+        }
+      }
+      return isGlobeLibraryReady();
+    })().finally(() => {
+      globeLibraryLoadPromise = null;
+    });
+  }
+
+  return globeLibraryLoadPromise;
+}
 
 const regionOptions = [
   "North America",
@@ -96,9 +194,12 @@ const worldRegionPolygons = [
 const state = loadState();
 const persistence = {
   apiAvailable: false,
+  apiEndpoint: API_STATE_ENDPOINTS[0] || API_STATE_PATH,
   initialised: false,
   syncTimer: null,
   syncInFlight: false,
+  pullInFlight: false,
+  pullTimer: null,
   lastSavedSerialised: "",
   lastRemoteSerialised: ""
 };
@@ -119,6 +220,8 @@ const catastropheList = document.getElementById("catastrophe-list");
 const globeCanvas = document.getElementById("globe-canvas");
 const globeTooltip = document.getElementById("globe-tooltip");
 const globeStage = globeCanvas?.parentElement || null;
+const globeLabelLayer = document.getElementById("globe-label-layer");
+const globeSatelliteDropdown = document.getElementById("globe-satellite-dropdown");
 const globeStatus = document.getElementById("globe-status");
 const globeInfoTrigger = document.getElementById("globe-info-trigger");
 const globeModal = document.getElementById("globe-modal");
@@ -128,6 +231,7 @@ const metricTotal = document.getElementById("metric-total");
 const metricCrowded = document.getElementById("metric-crowded");
 const metricAlerts = document.getElementById("metric-alerts");
 const corridorList = document.getElementById("corridor-list");
+const corridorCriteria = document.getElementById("corridor-criteria");
 const istClockDay = document.getElementById("ist-clock-day");
 const istClockTime = document.getElementById("ist-clock-time");
 const istClockDate = document.getElementById("ist-clock-date");
@@ -141,6 +245,8 @@ const clearSatellitesButton = document.getElementById("clear-satellites");
 const clearChangeAlertsButton = document.getElementById("clear-change-alerts");
 const clearLaunchesButton = document.getElementById("clear-launches");
 const clearCatastrophesButton = document.getElementById("clear-catastrophes");
+const controlPanel = document.querySelector(".control-panel");
+const detailPanel = document.querySelector(".detail-panel");
 const regionInput = document.getElementById("sat-region");
 const launchRegionInput = document.getElementById("launch-region");
 const satelliteForm = document.getElementById("satellite-form");
@@ -279,6 +385,35 @@ function saveState(options = {}) {
   }
 }
 
+function getOrderedApiEndpoints() {
+  const preferred = persistence.apiEndpoint;
+  if (!preferred) {
+    return [...API_STATE_ENDPOINTS];
+  }
+  return [preferred, ...API_STATE_ENDPOINTS.filter((endpoint) => endpoint !== preferred)];
+}
+
+async function requestStateApi(requestOptions = {}) {
+  let lastError = null;
+
+  for (const endpoint of getOrderedApiEndpoints()) {
+    try {
+      const response = await fetch(endpoint, requestOptions);
+      if (!response.ok) {
+        lastError = new Error(`Cloud sync failed with status ${response.status}.`);
+        continue;
+      }
+      persistence.apiEndpoint = endpoint;
+      persistence.apiAvailable = true;
+      return response;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("State API is unavailable.");
+}
+
 async function pushStateToApi(serialisedState) {
   if (!persistence.apiAvailable || persistence.syncInFlight) {
     return;
@@ -287,17 +422,13 @@ async function pushStateToApi(serialisedState) {
   persistence.syncInFlight = true;
 
   try {
-    const response = await fetch(API_STATE_PATH, {
+    await requestStateApi({
       method: "PUT",
       headers: {
         "Content-Type": "application/json"
       },
       body: serialisedState
     });
-
-    if (!response.ok) {
-      throw new Error(`Cloud sync failed with status ${response.status}.`);
-    }
 
     persistence.lastRemoteSerialised = serialisedState;
   } catch (error) {
@@ -329,18 +460,12 @@ function queueRemoteSync(serialisedState = JSON.stringify(getSerializableState()
 
 async function hydrateStateFromApi() {
   try {
-    const response = await fetch(API_STATE_PATH, {
+    const response = await requestStateApi({
       headers: {
         Accept: "application/json"
       },
       cache: "no-store"
     });
-
-    if (!response.ok) {
-      return;
-    }
-
-    persistence.apiAvailable = true;
 
     const remoteState = normaliseState(await response.json());
     const localState = normaliseState(getSerializableState());
@@ -361,6 +486,48 @@ async function hydrateStateFromApi() {
   } finally {
     persistence.initialised = true;
   }
+}
+
+async function pullLatestRemoteState() {
+  if (!persistence.initialised || persistence.pullInFlight) {
+    return;
+  }
+
+  persistence.pullInFlight = true;
+
+  try {
+    const response = await requestStateApi({
+      headers: {
+        Accept: "application/json"
+      },
+      cache: "no-store"
+    });
+
+    const remoteState = normaliseState(await response.json());
+    const remoteSerialised = JSON.stringify(remoteState);
+    const localSerialised = JSON.stringify(getSerializableState());
+
+    if (remoteSerialised !== localSerialised) {
+      replaceState(remoteState);
+      persistence.lastRemoteSerialised = remoteSerialised;
+      saveState({ skipRemote: true });
+      render();
+    }
+  } catch (error) {
+    persistence.apiAvailable = false;
+  } finally {
+    persistence.pullInFlight = false;
+  }
+}
+
+function startRemoteStatePolling() {
+  if (persistence.pullTimer) {
+    window.clearInterval(persistence.pullTimer);
+  }
+
+  persistence.pullTimer = window.setInterval(() => {
+    pullLatestRemoteState();
+  }, REMOTE_PULL_INTERVAL_MS);
 }
 
 function applyTheme(theme) {
@@ -452,6 +619,21 @@ function renderCorridorList(analysis) {
   `).join("");
 }
 
+function renderCorridorCriteria(analysis) {
+  if (!corridorCriteria) {
+    return;
+  }
+
+  corridorCriteria.innerHTML = `
+    <article class="corridor-criteria-card">
+      <strong>Static Risk Rules</strong>
+      <p>A region is considered crowded when more than 5 satellites are in the same corridor.</p>
+      <p>Crash risk is elevated when nearest distance is below a safety threshold in kilometers.</p>
+      <p>If satellites are nearly at the same coordinates and relative speed keeps closing, crash risk rises.</p>
+    </article>
+  `;
+}
+
 function hideGlobeTooltip() {
   if (!globeTooltip) {
     return;
@@ -501,7 +683,7 @@ function findHoveredSatelliteMarker(event) {
 
   globeState.visibleMarkers.forEach((marker) => {
     const distance = Math.hypot(pointerX - marker.x, pointerY - marker.y);
-    const hitRadius = marker.radius + 10;
+    const hitRadius = marker.radius + 6;
     if (distance <= hitRadius && distance < smallestDistance) {
       hoveredMarker = marker;
       smallestDistance = distance;
@@ -511,8 +693,227 @@ function findHoveredSatelliteMarker(event) {
   return hoveredMarker;
 }
 
+function clearGlobeLabelLayer() {
+  if (!globeLabelLayer) {
+    return;
+  }
+
+  globeLabelLayer.innerHTML = "";
+}
+
+function estimateGlobeLabelWidth(label) {
+  const text = String(label || "");
+  return Math.max(94, Math.min(210, 22 + text.length * 7));
+}
+
+function labelsOverlap(a, b) {
+  return !(a.x + a.width < b.x || b.x + b.width < a.x || a.y + a.height < b.y || b.y + b.height < a.y);
+}
+
+function renderGlobeLabels(renderedSatellites, width, height) {
+  if (!globeLabelLayer) {
+    return;
+  }
+
+  clearGlobeLabelLayer();
+  if (!renderedSatellites.length) {
+    return;
+  }
+
+  const scaleX = globeCanvas?.clientWidth ? globeCanvas.clientWidth / width : 1;
+  const scaleY = globeCanvas?.clientHeight ? globeCanvas.clientHeight / height : 1;
+  const viewWidth = globeCanvas?.clientWidth || width;
+  const viewHeight = globeCanvas?.clientHeight || height;
+  const labelHeight = 24;
+  const boundaryPadding = 4;
+  const offsetCandidates = [
+    { dx: 8, dy: -14 },
+    { dx: 8, dy: 8 },
+    { dx: -8, dy: -14 },
+    { dx: -8, dy: 8 },
+    { dx: 8, dy: -28 },
+    { dx: -8, dy: -28 },
+    { dx: 8, dy: 22 },
+    { dx: -8, dy: 22 }
+  ];
+
+  const labelItems = renderedSatellites
+    .map(({ entry, marker }) => ({
+      id: String(entry.satellite.id),
+      label: entry.satellite.name,
+      riskLevel: String(entry.risk?.level || "Low"),
+      markerX: marker.x * scaleX,
+      markerY: marker.y * scaleY,
+      labelWidth: estimateGlobeLabelWidth(entry.satellite.name)
+    }))
+    .filter((item) => Number.isFinite(item.markerX) && Number.isFinite(item.markerY))
+    .sort((a, b) => a.markerY - b.markerY);
+
+  const fragment = document.createDocumentFragment();
+  const placed = [];
+
+  const buildCandidate = (item, widthPx, offset) => {
+    let x = offset.dx >= 0
+      ? item.markerX + offset.dx
+      : item.markerX + offset.dx - widthPx;
+    let y = item.markerY + offset.dy;
+
+    x = Math.max(boundaryPadding, Math.min(x, viewWidth - widthPx - boundaryPadding));
+    y = Math.max(boundaryPadding, Math.min(y, viewHeight - labelHeight - boundaryPadding));
+
+    return { x, y, width: widthPx, height: labelHeight };
+  };
+
+  labelItems.forEach((item) => {
+    const widthPx = item.labelWidth;
+    let chosen = null;
+    let fallback = null;
+    let fallbackOverlapCount = Number.POSITIVE_INFINITY;
+
+    offsetCandidates.forEach((offset) => {
+      if (chosen) {
+        return;
+      }
+
+      const candidate = buildCandidate(item, widthPx, offset);
+      const overlapCount = placed.reduce(
+        (count, rect) => count + (labelsOverlap(rect, candidate) ? 1 : 0),
+        0
+      );
+
+      if (overlapCount === 0) {
+        chosen = candidate;
+        return;
+      }
+
+      if (overlapCount < fallbackOverlapCount) {
+        fallback = candidate;
+        fallbackOverlapCount = overlapCount;
+      }
+    });
+
+    const finalPlacement = chosen || fallback || buildCandidate(item, widthPx, offsetCandidates[0]);
+    placed.push(finalPlacement);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "globe-label-btn";
+    button.textContent = item.label;
+    button.dataset.globeSelectId = item.id;
+    button.dataset.risk = item.riskLevel.toLowerCase();
+    button.setAttribute("aria-label", `Show details for ${item.label}`);
+    button.style.left = `${finalPlacement.x}px`;
+    button.style.top = `${finalPlacement.y}px`;
+    button.style.width = `${finalPlacement.width}px`;
+    if (String(state.selectedSatelliteId) === item.id) {
+      button.dataset.active = "true";
+    }
+    fragment.appendChild(button);
+  });
+
+  globeLabelLayer.appendChild(fragment);
+}
+
+function hideGlobeSatelliteDropdown() {
+  if (!globeSatelliteDropdown) {
+    return;
+  }
+
+  globeSatelliteDropdown.innerHTML = "";
+  globeSatelliteDropdown.classList.add("hidden");
+  delete globeSatelliteDropdown.dataset.satelliteId;
+}
+
+function renderGlobeSatelliteDropdown(entry) {
+  if (!globeSatelliteDropdown || !entry) {
+    return;
+  }
+
+  const nearestText = entry.nearest
+    ? `${escapeHtml(entry.nearest.target.name)} (${entry.nearest.distance.toFixed(0)} km)`
+    : "None";
+
+  globeSatelliteDropdown.innerHTML = `
+    <h3>${escapeHtml(entry.satellite.name)} <span class="badge ${entry.risk.level.toLowerCase()}">${entry.risk.level} Risk</span></h3>
+    <p>${escapeHtml(entry.satellite.id)} | ${escapeHtml(entry.satellite.operator)} | ${escapeHtml(entry.satellite.region)}</p>
+    <div class="meta-grid">
+      <article class="meta-card">
+        <span>Latitude</span>
+        <strong>${entry.satellite.latitude.toFixed(2)}</strong>
+      </article>
+      <article class="meta-card">
+        <span>Longitude</span>
+        <strong>${entry.satellite.longitude.toFixed(2)}</strong>
+      </article>
+      <article class="meta-card">
+        <span>Altitude</span>
+        <strong>${entry.satellite.altitude} km</strong>
+      </article>
+      <article class="meta-card">
+        <span>Velocity</span>
+        <strong>${entry.satellite.velocity.toFixed(2)} km/s</strong>
+      </article>
+      <article class="meta-card">
+        <span>Mission</span>
+        <strong>${escapeHtml(entry.satellite.mission)}</strong>
+      </article>
+      <article class="meta-card">
+        <span>Status</span>
+        <strong>${escapeHtml(entry.satellite.status)}</strong>
+      </article>
+      <article class="meta-card">
+        <span>Inclination</span>
+        <strong>${entry.satellite.inclination.toFixed(1)} deg</strong>
+      </article>
+      <article class="meta-card">
+        <span>Nearest</span>
+        <strong>${nearestText}</strong>
+      </article>
+    </div>
+    <p>Main trigger: ${escapeHtml(entry.risk.signals[0])}.</p>
+    <div class="globe-dropdown-actions">
+      <button type="button" data-close-globe-dropdown="true">Close</button>
+    </div>
+  `;
+  globeSatelliteDropdown.dataset.satelliteId = String(entry.satellite.id);
+  globeSatelliteDropdown.classList.remove("hidden");
+}
+
+function openGlobeSatelliteDropdownById(satelliteId) {
+  const targetId = String(satelliteId || "");
+  const analysis = buildAnalysis();
+  const entry = analysis.riskEntries.find((item) => String(item.satellite.id) === targetId);
+  if (!entry) {
+    hideGlobeSatelliteDropdown();
+    return;
+  }
+
+  renderGlobeSatelliteDropdown(entry);
+}
+
+function syncGlobeSatelliteDropdown(analysis) {
+  if (!globeSatelliteDropdown || globeSatelliteDropdown.classList.contains("hidden")) {
+    return;
+  }
+
+  const targetId = globeSatelliteDropdown.dataset.satelliteId;
+  if (!targetId) {
+    hideGlobeSatelliteDropdown();
+    return;
+  }
+
+  const entry = analysis.riskEntries.find((item) => String(item.satellite.id) === targetId);
+  if (!entry) {
+    hideGlobeSatelliteDropdown();
+    return;
+  }
+
+  renderGlobeSatelliteDropdown(entry);
+}
+
 async function loadGlobeGeometry() {
-  if (!window.d3 || !window.topojson) {
+  const librariesLoaded = await ensureGlobeLibrariesLoaded();
+  if (!librariesLoaded || !window.d3 || !window.topojson) {
     globeState.loadError = "The globe libraries are missing, so the country model could not be loaded.";
     globeState.countryGeometryLoaded = false;
     drawGlobe(buildAnalysis());
@@ -526,12 +927,24 @@ async function loadGlobeGeometry() {
     }
 
     const atlas = await response.json();
-    const countriesObject = atlas?.objects?.countries;
+    const objects = atlas?.objects || {};
+    const countriesObject = objects.countries || objects.admin0 || objects.land;
     if (!countriesObject) {
       throw new Error("The globe country dataset is missing country geometry.");
     }
 
-    globeState.countryFeatures = window.topojson.feature(atlas, countriesObject).features;
+    const rawFeature = window.topojson.feature(atlas, countriesObject);
+    const countryFeatures = rawFeature?.type === "FeatureCollection"
+      ? rawFeature.features
+      : rawFeature
+        ? [rawFeature]
+        : [];
+
+    if (!countryFeatures.length) {
+      throw new Error("The globe country dataset returned empty country geometry.");
+    }
+
+    globeState.countryFeatures = countryFeatures;
     globeState.countryGeometryLoaded = true;
     globeState.loadError = "";
   } catch (error) {
@@ -596,13 +1009,19 @@ function getClosestSatellites() {
   return state.satellites.map((satellite) => {
     const neighbors = state.satellites
       .filter((candidate) => candidate.id !== satellite.id)
-      .map((candidate) => ({
-        target: candidate,
-        distance: getDistanceKm(satellite, candidate),
-        altitudeGap: Math.abs(satellite.altitude - candidate.altitude),
-        inclinationGap: Math.abs(satellite.inclination - candidate.inclination),
-        velocityGap: Math.abs(satellite.velocity - candidate.velocity)
-      }))
+      .map((candidate) => {
+        const latitudeGap = Math.abs(satellite.latitude - candidate.latitude);
+        const rawLongitudeGap = Math.abs(satellite.longitude - candidate.longitude);
+        const longitudeGap = Math.min(rawLongitudeGap, 360 - rawLongitudeGap);
+        return {
+          target: candidate,
+          distance: getDistanceKm(satellite, candidate),
+          altitudeGap: Math.abs(satellite.altitude - candidate.altitude),
+          inclinationGap: Math.abs(satellite.inclination - candidate.inclination),
+          velocityGap: Math.abs(satellite.velocity - candidate.velocity),
+          coordinateGap: Math.hypot(latitudeGap, longitudeGap)
+        };
+      })
       .sort((a, b) => a.distance - b.distance)
       .slice(0, 3);
 
@@ -628,20 +1047,24 @@ function analyzeRegions() {
     const velocitySpread = Math.max(...velocities) - Math.min(...velocities);
     const inclinationSpread = Math.max(...inclinations) - Math.min(...inclinations);
     const nonOperationalCount = satellites.filter((item) => item.status !== "Operational").length;
-    const crowded = satellites.length >= 3 || altitudeSpread < 40 || inclinationSpread < 3;
+    const crowdedByCount = satellites.length > 5;
+    const crowdedByAltitude = altitudeSpread < 35;
+    const crowdedByInclination = inclinationSpread < 2.5;
+    const crowded = crowdedByCount || crowdedByAltitude || crowdedByInclination;
 
     const reasons = [];
-    if (satellites.length >= 3) reasons.push(`${satellites.length} satellites share this corridor`);
-    if (altitudeSpread < 40) reasons.push(`altitude separation is only ${altitudeSpread.toFixed(0)} km`);
-    if (inclinationSpread < 3) reasons.push(`orbital inclination spread is only ${inclinationSpread.toFixed(1)} deg`);
+    if (crowdedByCount) reasons.push(`${satellites.length} satellites are in this corridor (threshold: >5)`);
+    if (crowdedByAltitude) reasons.push(`altitude separation is only ${altitudeSpread.toFixed(0)} km`);
+    if (crowdedByInclination) reasons.push(`orbital inclination spread is only ${inclinationSpread.toFixed(1)} deg`);
     if (velocitySpread < 0.12) reasons.push(`velocity band is tightly packed at ${velocitySpread.toFixed(2)} km/s spread`);
     if (nonOperationalCount > 0) reasons.push(`${nonOperationalCount} satellite(s) need monitoring or maintenance`);
 
     const pressureScore = Math.min(
       100,
-      satellites.length * 18 +
+      satellites.length * 13 +
+      (crowdedByCount ? 22 : 0) +
       Math.max(0, 30 - altitudeSpread) +
-      Math.max(0, 12 - inclinationSpread * 3) +
+      Math.max(0, 12 - inclinationSpread * 3.2) +
       nonOperationalCount * 8
     );
 
@@ -667,14 +1090,16 @@ function calculateRisk(satellite, regionInsight, nearest) {
   const altitudeGap = nearest?.altitudeGap ?? 999;
   const inclinationGap = nearest?.inclinationGap ?? 180;
   const velocityGap = nearest?.velocityGap ?? 10;
+  const coordinateGap = nearest?.coordinateGap ?? 999;
 
   let score = 8;
   const signals = [];
+  const closeDistanceThresholdKm = 900;
 
-  if (distance < 700) {
-    score += 42;
+  if (distance < closeDistanceThresholdKm) {
+    score += 44;
     signals.push("critical proximity to nearest satellite");
-  } else if (distance < 1400) {
+  } else if (distance < 1500) {
     score += 28;
     signals.push("close orbital approach detected");
   } else if (distance < 2400) {
@@ -698,6 +1123,14 @@ function calculateRisk(satellite, regionInsight, nearest) {
   if (velocityGap < 0.06) {
     score += 10;
     signals.push("similar relative velocity increases conflict window");
+  }
+
+  if (coordinateGap < 0.85 && velocityGap < 0.09) {
+    score += 18;
+    signals.push("satellites are nearly at the same coordinates with closing relative speed");
+  } else if (coordinateGap < 1.4 && velocityGap < 0.15) {
+    score += 10;
+    signals.push("coordinate overlap trend detected with low relative speed gap");
   }
 
   if (regionInsight.pressureScore > 70) {
@@ -1304,14 +1737,16 @@ function renderChangeAlerts() {
 }
 
 function renderGlobe(analysis) {
-  if (globeState.loadError) {
-    globeStatus.textContent = globeState.loadError;
-  } else if (!globeState.countryGeometryLoaded) {
-    globeStatus.textContent = "Loading the country-outline globe with 15-degree latitude and longitude lines.";
-  } else if (analysis.selectedEntry) {
-    globeStatus.textContent = `${analysis.selectedEntry.satellite.name} is selected. Drag to rotate the country-outline globe and compare the satellite position against the latitude and longitude grid.`;
-  } else {
-    globeStatus.textContent = "Drag to rotate the country-outline globe. Latitude and longitude lines are shown every 15 degrees.";
+  if (globeStatus) {
+    if (globeState.loadError) {
+      globeStatus.textContent = globeState.loadError;
+    } else if (!globeState.countryGeometryLoaded) {
+      globeStatus.textContent = "Loading the country-outline globe with 15-degree latitude and longitude lines.";
+    } else if (analysis.selectedEntry) {
+      globeStatus.textContent = `${analysis.selectedEntry.satellite.name} is selected. Drag to rotate the country-outline globe and compare the satellite position against the latitude and longitude grid.`;
+    } else {
+      globeStatus.textContent = "Drag to rotate the country-outline globe. Latitude and longitude lines are shown every 15 degrees.";
+    }
   }
 
   drawGlobe(analysis);
@@ -1332,37 +1767,77 @@ function resizeGlobeCanvas() {
 function getGlobePalette() {
   if (state.theme === "light") {
     return {
-      atmosphereStart: "rgba(86, 166, 230, 0.48)",
+      atmosphereStart: "rgba(96, 182, 236, 0.52)",
       atmosphereEnd: "rgba(214, 235, 252, 0)",
-      oceanStart: "#dff0fb",
-      oceanMid: "#78b5e3",
-      oceanEnd: "#2f6d99",
-      landFill: "rgba(114, 170, 123, 0.72)",
-      landStroke: "rgba(247, 252, 255, 0.82)",
-      graticule: "rgba(28, 72, 118, 0.18)",
-      axis: "rgba(11, 104, 170, 0.34)",
-      outline: "rgba(16, 35, 58, 0.22)",
+      oceanStart: "#9ddfff",
+      oceanMid: "#3e91c7",
+      oceanEnd: "#1e4f82",
+      landFill: "rgba(114, 180, 154, 0.82)",
+      landStroke: "rgba(228, 247, 255, 0.68)",
+      graticule: "rgba(38, 86, 129, 0.25)",
+      outline: "rgba(16, 35, 58, 0.3)",
+      glowCore: "rgba(151, 231, 255, 0.44)",
+      glowMid: "rgba(106, 204, 242, 0.12)",
+      shadowEdge: "rgba(7, 21, 42, 0.18)",
       label: "#10233a"
     };
   }
 
   return {
-    atmosphereStart: "rgba(30, 118, 191, 0.86)",
+    atmosphereStart: "rgba(39, 120, 198, 0.88)",
     atmosphereEnd: "rgba(3, 12, 28, 0)",
-    oceanStart: "#61d1ff",
-    oceanMid: "#195d88",
-    oceanEnd: "#081d34",
-    landFill: "rgba(94, 178, 130, 0.66)",
-    landStroke: "rgba(225, 245, 255, 0.34)",
-    graticule: "rgba(167, 222, 255, 0.18)",
-    axis: "rgba(102, 224, 255, 0.28)",
-    outline: "rgba(186, 229, 255, 0.28)",
+    oceanStart: "#64cfff",
+    oceanMid: "#1f5f97",
+    oceanEnd: "#0a2457",
+    landFill: "rgba(98, 176, 150, 0.9)",
+    landStroke: "rgba(180, 232, 219, 0.62)",
+    graticule: "rgba(149, 206, 247, 0.2)",
+    outline: "rgba(190, 228, 255, 0.34)",
+    glowCore: "rgba(118, 223, 255, 0.42)",
+    glowMid: "rgba(85, 176, 245, 0.11)",
+    shadowEdge: "rgba(5, 16, 40, 0.35)",
     label: "rgba(239, 246, 255, 0.94)"
   };
 }
 
+function paintGlobeLighting(context, centerX, centerY, radius, palette) {
+  const glowGradient = context.createRadialGradient(
+    centerX - radius * 0.2,
+    centerY - radius * 0.26,
+    radius * 0.07,
+    centerX,
+    centerY,
+    radius * 1.02
+  );
+  glowGradient.addColorStop(0, palette.glowCore);
+  glowGradient.addColorStop(0.42, palette.glowMid);
+  glowGradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.fillStyle = glowGradient;
+  context.fill();
+
+  const shadowGradient = context.createRadialGradient(
+    centerX + radius * 0.24,
+    centerY + radius * 0.24,
+    radius * 0.22,
+    centerX,
+    centerY,
+    radius * 1.06
+  );
+  shadowGradient.addColorStop(0.58, "rgba(0, 0, 0, 0)");
+  shadowGradient.addColorStop(1, palette.shadowEdge);
+
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.fillStyle = shadowGradient;
+  context.fill();
+}
+
 function drawGlobeFallbackState(context, width, height, message, palette) {
   context.clearRect(0, 0, width, height);
+  context.globalAlpha = 1;
   context.fillStyle = "rgba(255, 255, 255, 0.03)";
   context.fillRect(0, 0, width, height);
   context.fillStyle = palette.label;
@@ -1375,7 +1850,7 @@ function drawGlobeFallbackState(context, width, height, message, palette) {
 function buildGlobeProjection(width, height) {
   return window.d3.geoOrthographic()
     .translate([width / 2, height / 2])
-    .scale(Math.min(width, height) * 0.31)
+    .scale(Math.min(width, height) * GLOBE_RADIUS_FACTOR)
     .rotate([
       (-globeState.rotationY * 180) / Math.PI,
       (-globeState.rotationX * 180) / Math.PI
@@ -1410,6 +1885,161 @@ function projectSatelliteMarker(projection, satellite, centerX, centerY) {
   };
 }
 
+function projectSimplePoint(latitude, longitude, centerX, centerY, radius) {
+  const lat = (latitude * Math.PI) / 180;
+  const lon = (longitude * Math.PI) / 180;
+
+  const baseX = Math.cos(lat) * Math.cos(lon);
+  const baseY = Math.sin(lat);
+  const baseZ = Math.cos(lat) * Math.sin(lon);
+
+  const cosY = Math.cos(globeState.rotationY);
+  const sinY = Math.sin(globeState.rotationY);
+  const rotatedX = baseX * cosY + baseZ * sinY;
+  const rotatedZ = -baseX * sinY + baseZ * cosY;
+
+  const cosX = Math.cos(globeState.rotationX);
+  const sinX = Math.sin(globeState.rotationX);
+  const tiltedY = baseY * cosX - rotatedZ * sinX;
+  const tiltedZ = baseY * sinX + rotatedZ * cosX;
+
+  if (tiltedZ <= 0) {
+    return null;
+  }
+
+  return {
+    x: centerX + rotatedX * radius,
+    y: centerY - tiltedY * radius,
+    depth: tiltedZ
+  };
+}
+
+function drawSimpleGraticule(context, centerX, centerY, radius, palette) {
+  context.save();
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.clip();
+
+  context.strokeStyle = palette.graticule;
+  context.lineWidth = Math.max(0.7, radius * 0.0035);
+
+  for (let latitude = -75; latitude <= 75; latitude += GLOBE_GRATICULE_STEP) {
+    context.beginPath();
+    let segmentOpen = false;
+    for (let longitude = -180; longitude <= 180; longitude += 4) {
+      const point = projectSimplePoint(latitude, longitude, centerX, centerY, radius);
+      if (point) {
+        if (!segmentOpen) {
+          context.moveTo(point.x, point.y);
+          segmentOpen = true;
+        } else {
+          context.lineTo(point.x, point.y);
+        }
+      } else if (segmentOpen) {
+        context.stroke();
+        context.beginPath();
+        segmentOpen = false;
+      }
+    }
+    if (segmentOpen) {
+      context.stroke();
+    }
+  }
+
+  for (let longitude = -180; longitude <= 180; longitude += GLOBE_GRATICULE_STEP) {
+    context.beginPath();
+    let segmentOpen = false;
+    for (let latitude = -90; latitude <= 90; latitude += 4) {
+      const point = projectSimplePoint(latitude, longitude, centerX, centerY, radius);
+      if (point) {
+        if (!segmentOpen) {
+          context.moveTo(point.x, point.y);
+          segmentOpen = true;
+        } else {
+          context.lineTo(point.x, point.y);
+        }
+      } else if (segmentOpen) {
+        context.stroke();
+        context.beginPath();
+        segmentOpen = false;
+      }
+    }
+    if (segmentOpen) {
+      context.stroke();
+    }
+  }
+
+  context.restore();
+}
+
+function drawSimpleFallbackGlobe(analysis, context, width, height, centerX, centerY, radius, palette) {
+  const oceanGradient = context.createRadialGradient(
+    centerX - radius * 0.24,
+    centerY - radius * 0.34,
+    radius * 0.12,
+    centerX,
+    centerY,
+    radius * 1.02
+  );
+  oceanGradient.addColorStop(0, palette.oceanStart);
+  oceanGradient.addColorStop(0.45, palette.oceanMid);
+  oceanGradient.addColorStop(1, palette.oceanEnd);
+
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.fillStyle = oceanGradient;
+  context.fill();
+  paintGlobeLighting(context, centerX, centerY, radius, palette);
+
+  drawSimpleGraticule(context, centerX, centerY, radius, palette);
+
+  const renderedSatellites = analysis.riskEntries
+    .map((entry) => ({
+      entry,
+      radius: entry.satellite.id === state.selectedSatelliteId ? 3.2 : 1.8,
+      marker: projectSimplePoint(entry.satellite.latitude, entry.satellite.longitude, centerX, centerY, radius)
+    }))
+    .filter((item) => item.marker)
+    .sort((a, b) => a.marker.depth - b.marker.depth);
+
+  renderedSatellites.forEach(({ entry, marker, radius: markerRadius }) => {
+    const color = entry.risk.level === "High"
+      ? "#ff6b7d"
+      : entry.risk.level === "Medium"
+        ? "#ffbf69"
+        : "#66e0ff";
+
+    context.beginPath();
+    context.arc(marker.x, marker.y, markerRadius, 0, Math.PI * 2);
+    context.fillStyle = color;
+    context.shadowColor = color;
+    context.shadowBlur = 8;
+    context.fill();
+    context.shadowBlur = 0;
+  });
+
+  globeState.visibleMarkers = renderedSatellites.map(({ entry, marker, radius: markerRadius }) => ({
+    satellite: entry.satellite,
+    risk: entry.risk,
+    x: marker.x,
+    y: marker.y,
+    radius: markerRadius
+  }));
+
+  renderGlobeLabels(renderedSatellites, width, height);
+
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.lineWidth = Math.max(1.5, radius * 0.01);
+  context.strokeStyle = palette.outline;
+  context.stroke();
+
+  context.font = `${Math.max(10, radius * 0.056)}px Bahnschrift`;
+  context.fillStyle = palette.label;
+  context.textAlign = "right";
+  context.fillText("15 deg latitude / longitude grid", width - radius * 0.08, height - radius * 0.05);
+}
+
 function drawGlobe(analysis) {
   resizeGlobeCanvas();
 
@@ -1418,10 +2048,11 @@ function drawGlobe(analysis) {
   const height = globeCanvas.height;
   const centerX = width / 2;
   const centerY = height / 2;
-  const radius = Math.min(width, height) * 0.31;
+  const radius = Math.min(width, height) * GLOBE_RADIUS_FACTOR;
   const palette = getGlobePalette();
 
   context.clearRect(0, 0, width, height);
+  context.globalAlpha = 1;
 
   const background = context.createRadialGradient(centerX * 0.82, centerY * 0.76, radius * 0.24, centerX, centerY, radius * 1.9);
   background.addColorStop(0, palette.atmosphereStart);
@@ -1431,22 +2062,14 @@ function drawGlobe(analysis) {
   context.fillRect(0, 0, width, height);
 
   if (!window.d3) {
-    globeState.visibleMarkers = [];
     hideGlobeTooltip();
-    drawGlobeFallbackState(context, width, height, "Globe renderer is unavailable.", palette);
+    drawSimpleFallbackGlobe(analysis, context, width, height, centerX, centerY, radius, palette);
     return;
   }
 
   if (!globeState.countryGeometryLoaded || !globeState.countryFeatures?.length) {
-    globeState.visibleMarkers = [];
     hideGlobeTooltip();
-    drawGlobeFallbackState(
-      context,
-      width,
-      height,
-      globeState.loadError || "Loading country outlines...",
-      palette
-    );
+    drawSimpleFallbackGlobe(analysis, context, width, height, centerX, centerY, radius, palette);
     return;
   }
 
@@ -1454,13 +2077,6 @@ function drawGlobe(analysis) {
   const path = window.d3.geoPath(projection, context);
   const sphere = { type: "Sphere" };
   const graticule = window.d3.geoGraticule().step([GLOBE_GRATICULE_STEP, GLOBE_GRATICULE_STEP])();
-  const axisLines = {
-    type: "MultiLineString",
-    coordinates: [
-      [[-180, 0], [180, 0]],
-      [[0, -90], [0, 90]]
-    ]
-  };
 
   const oceanGradient = context.createRadialGradient(
     centerX - radius * 0.24,
@@ -1478,6 +2094,7 @@ function drawGlobe(analysis) {
   path(sphere);
   context.fillStyle = oceanGradient;
   context.fill();
+  paintGlobeLighting(context, centerX, centerY, radius, palette);
 
   context.save();
   context.beginPath();
@@ -1497,18 +2114,12 @@ function drawGlobe(analysis) {
   context.strokeStyle = palette.graticule;
   context.lineWidth = Math.max(0.8, radius * 0.0042);
   context.stroke();
-
-  context.beginPath();
-  path(axisLines);
-  context.strokeStyle = palette.axis;
-  context.lineWidth = Math.max(1.1, radius * 0.0054);
-  context.stroke();
   context.restore();
 
   const renderedSatellites = analysis.riskEntries
     .map((entry) => ({
       entry,
-      radius: entry.satellite.id === state.selectedSatelliteId ? 7.5 : 5.2,
+      radius: entry.satellite.id === state.selectedSatelliteId ? 3.4 : 1.9,
       marker: projectSatelliteMarker(projection, entry.satellite, centerX, centerY)
     }))
     .filter((item) => item.marker);
@@ -1529,15 +2140,15 @@ function drawGlobe(analysis) {
     context.arc(marker.x, marker.y, markerRadius, 0, Math.PI * 2);
     context.fillStyle = color;
     context.shadowColor = color;
-    context.shadowBlur = 18;
+    context.shadowBlur = 10;
     context.fill();
     context.shadowBlur = 0;
 
     if (entry.satellite.id === state.selectedSatelliteId) {
       context.beginPath();
-      context.arc(marker.x, marker.y, markerRadius + 4, 0, Math.PI * 2);
+      context.arc(marker.x, marker.y, markerRadius + 2.6, 0, Math.PI * 2);
       context.strokeStyle = palette.label;
-      context.lineWidth = 1.5;
+      context.lineWidth = 1.2;
       context.stroke();
     }
   });
@@ -1551,17 +2162,7 @@ function drawGlobe(analysis) {
     radius: markerRadius
   }));
 
-  const labeledSatellites = renderedSatellites.filter(({ entry }, index) =>
-    entry.satellite.id === state.selectedSatelliteId || entry.risk.level !== "Low" || index < 3
-  );
-
-  context.fillStyle = palette.label;
-  context.textAlign = "left";
-  context.textBaseline = "middle";
-  context.font = `${Math.max(11, radius * 0.07)}px Bahnschrift`;
-  labeledSatellites.forEach(({ entry, marker }) => {
-    context.fillText(entry.satellite.name, marker.x + 12, marker.y - 10);
-  });
+  renderGlobeLabels(renderedSatellites, width, height);
 
   context.beginPath();
   path(sphere);
@@ -1572,6 +2173,8 @@ function drawGlobe(analysis) {
   context.font = `${Math.max(10, radius * 0.056)}px Bahnschrift`;
   context.fillStyle = palette.label;
   context.textAlign = "right";
+  context.fillText("15 deg latitude / longitude grid", width - radius * 0.08, height - radius * 0.05);
+  context.globalAlpha = 0;
   context.fillText("15° latitude / longitude grid", width - radius * 0.08, height - radius * 0.05);
 }
 
@@ -1645,6 +2248,22 @@ function renderMetrics(analysis) {
     state.catastrophes.length;
 }
 
+function alignControlPanelWithRegistry() {
+  if (!controlPanel || !detailPanel) {
+    return;
+  }
+
+  controlPanel.style.minHeight = "";
+  if (window.innerWidth < 1180) {
+    return;
+  }
+
+  const registryHeight = detailPanel.getBoundingClientRect().height;
+  if (registryHeight > 0) {
+    controlPanel.style.minHeight = `${Math.ceil(registryHeight)}px`;
+  }
+}
+
 function render() {
   const analysis = buildAnalysis();
   renderHeroHighlights(analysis);
@@ -1658,16 +2277,19 @@ function render() {
   renderChangeAlerts();
   renderOperationsWatchlist(analysis);
   renderGlobe(analysis);
+  syncGlobeSatelliteDropdown(analysis);
   renderCoverSignals(analysis);
   renderRegionChart(analysis);
   renderAltitudeChart();
   renderBusiestRegions(analysis);
   renderMetrics(analysis);
   renderCorridorList(analysis);
+  renderCorridorCriteria(analysis);
   renderLaunches();
   renderCatastrophes();
   renderGlobeModal(analysis);
   applyTheme(state.theme);
+  alignControlPanelWithRegistry();
   saveState();
 }
 
@@ -1836,6 +2458,20 @@ document.getElementById("sat-lat").addEventListener("input", updateDetectedRegio
 document.getElementById("sat-lon").addEventListener("input", updateDetectedRegion);
 
 document.addEventListener("click", (event) => {
+  const globeLabelButton = event.target.closest("[data-globe-select-id]");
+  if (globeLabelButton) {
+    const targetId = globeLabelButton.dataset.globeSelectId;
+    setSelectedSatellite(targetId);
+    openGlobeSatelliteDropdownById(targetId);
+    return;
+  }
+
+  const closeGlobeDropdownButton = event.target.closest("[data-close-globe-dropdown]");
+  if (closeGlobeDropdownButton) {
+    hideGlobeSatelliteDropdown();
+    return;
+  }
+
   const selectSatelliteButton = event.target.closest("[data-select-satellite]");
   if (selectSatelliteButton) {
     setSelectedSatellite(selectSatelliteButton.dataset.selectSatellite);
@@ -1894,7 +2530,7 @@ globeCanvas.addEventListener("pointermove", (event) => {
   const deltaY = event.clientY - globeState.pointerY;
   globeState.pointerX = event.clientX;
   globeState.pointerY = event.clientY;
-  globeState.rotationY -= deltaX * 0.006;
+  globeState.rotationY += deltaX * 0.006;
   globeState.rotationX = Math.max(-1.2, Math.min(1.2, globeState.rotationX + deltaY * 0.006));
   hideGlobeTooltip();
   renderGlobe(buildAnalysis());
@@ -1922,7 +2558,10 @@ function animateGlobe() {
   globeState.animationFrame = requestAnimationFrame(animateGlobe);
 }
 
-window.addEventListener("resize", () => drawGlobe(buildAnalysis()));
+window.addEventListener("resize", () => {
+  drawGlobe(buildAnalysis());
+  alignControlPanelWithRegistry();
+});
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeGlobeModal();
@@ -1937,6 +2576,7 @@ async function initialiseApp() {
   animateGlobe();
   render();
   await hydrateStateFromApi();
+  startRemoteStatePolling();
 }
 
 initialiseApp();

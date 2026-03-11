@@ -35,13 +35,11 @@
       <div class="planet-panel">
         <div class="planet-stage">
           <canvas id="globe-canvas" class="globe-canvas" width="720" height="720"></canvas>
+          <div id="globe-label-layer" class="globe-label-layer" aria-label="Satellite label layer"></div>
           <button id="globe-info-trigger" class="globe-info-trigger" type="button">Viewer Info</button>
           <div id="globe-tooltip" class="globe-tooltip hidden" aria-hidden="true"></div>
         </div>
-        <div class="cover-caption">
-          <h2>Satellite Location Around Earth</h2>
-          <p id="globe-status">Loading the country-outline globe with latitude and longitude lines.</p>
-        </div>
+        <section id="globe-satellite-dropdown" class="globe-satellite-dropdown hidden" aria-live="polite" aria-label="Selected satellite details"></section>
         <div id="cover-signal-grid" class="cover-signal-grid"></div>
       </div>
     </header>
@@ -76,6 +74,14 @@
             <h3>Named Corridors</h3>
           </div>
           <div id="corridor-list" class="corridor-list" aria-label="Named corridors"></div>
+          <div id="corridor-criteria" class="corridor-criteria" aria-label="Corridor and risk criteria">
+            <article class="corridor-criteria-card">
+              <strong>Static Risk Rules</strong>
+              <p>A region is considered crowded when more than 5 satellites are in the same corridor.</p>
+              <p>Crash risk is elevated when nearest distance is below a safety threshold in kilometers.</p>
+              <p>If satellites are nearly at the same coordinates and relative speed keeps closing, crash risk rises.</p>
+            </article>
+          </div>
         </section>
 
         <section class="panel form-panel" id="feature-entry">
@@ -373,10 +379,29 @@
       <div id="globe-modal-body" class="modal-body"></div>
     </div>
   </div>
-
+  <div id="ai-chat-wrapper" class="ai-chat-wrapper">
+    <button id="chat-toggle-btn" class="chat-toggle-btn" type="button" aria-expanded="false" aria-controls="chat-window">
+      AI
+    </button>
+    <section id="chat-window" class="chat-window hidden" aria-label="AI Mission Assistant">
+      <header class="chat-header">
+        <strong>Mission Assistant</strong>
+      </header>
+      <div id="chat-history" class="chat-history" aria-live="polite">
+        <p class="bot-msg">Choose one supported question from the dropdown.</p>
+      </div>
+      <form id="chat-form" class="chat-form">
+        <select id="chat-question-select" required aria-label="Choose a supported question">
+          <option value="">Select a question</option>
+        </select>
+        <button type="submit">Ask</button>
+      </form>
+    </section>
+  </div>
   <script src="vendor/d3-array.min.js"></script>
   <script src="vendor/d3-geo.min.js"></script>
   <script src="vendor/topojson-client.min.js"></script>
   <script src="app.js"></script>
+  <script src="chat.js"></script>
 </body>
 </html>
