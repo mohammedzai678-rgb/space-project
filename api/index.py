@@ -12,6 +12,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from sgp4.api import Satrec, jday
 import google.generativeai as genai
+from flask import Flask
+from flask_cors import CORS
+
+app = Flask(__name__)
+CORS(app)
 
 
 # Hide the annoying warnings
@@ -176,4 +181,4 @@ if __name__ == '__main__':
     
     print("🚀 Mission Control Server Online...")
     app.run(host='127.0.0.1', port=5000, debug=False)
-    app = Flask(__name__)
+    
