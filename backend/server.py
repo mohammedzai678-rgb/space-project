@@ -62,3 +62,6 @@ def update_state():
 
     data_storage = new_data
     return jsonify({"status": "success"}), 200
+
+if __name__ == "__main__":
+    app.run(debug=True)
