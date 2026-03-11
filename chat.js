@@ -262,13 +262,16 @@ chatForm.onsubmit = async (e) => {
   chatHistory.innerHTML += `<p class="user-msg">${msg}</p>`;
   chatInput.value = '';
 
-  const res = await fetch('http://127.0.0.1:5000/api/chat', {
+  // Inside your chatForm.onsubmit
+const res = await fetch('http://127.0.0.1:5000/api/chat', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ message: msg })
-  });
-  const data = await res.json();
-  chatHistory.innerHTML += `<p class="bot-msg">${data.response}</p>`;
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: msg }) 
+});
+
+const data = await res.json();
+// Gemini often uses Markdown (like **bold**), so this helps it look good
+chatHistory.innerHTML += `<div class="bot-msg">${data.response.replace(/\n/g, '<br>')}</div>`;
   chatHistory.scrollTop = chatHistory.scrollHeight;
 };
 
