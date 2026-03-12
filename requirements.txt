@@ -2,3 +2,4 @@ flask
 flask-cors
 google-generativeai
 sgp4
+requests
