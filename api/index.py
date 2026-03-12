@@ -23,7 +23,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 api_key = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=api_key)
 # Using the stable model string
-model = genai.GenerativeModel('gemini-2.0-flash')
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 # This is your central memory
 data_storage = {
