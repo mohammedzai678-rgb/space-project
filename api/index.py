@@ -16,21 +16,14 @@ from flask import Flask
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)
-
-
-# Hide the annoying warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-
-app = Flask(__name__)
-# Standard CORS for local development
+# Standard CORS for all origins
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # --- 1. CONFIGURATION ---
-# Replace with your actual Gemini API Key
-genai.configure(api_key="AIzaSyAFyvn0_YbZLpY-3XnQJQraK05VOTw3YHw")
-# Use the newer stable model string
-model = genai.GenerativeModel('gemini-2.5-flash')
+api_key = os.environ.get("GEMINI_API_KEY")
+genai.configure(api_key=api_key)
+# Using the stable model string
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 # This is your central memory
 data_storage = {
