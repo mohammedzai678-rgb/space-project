@@ -1,4 +1,4 @@
-const CHAT_API_PATH = "http://127.0.0.1:5000/api/chat";
+const CHAT_API_PATH = "/api/chat";
 const CHAT_POSITION_KEY = "orbital-chat-position-v1";
 
 // 1. SELECT ELEMENTS
