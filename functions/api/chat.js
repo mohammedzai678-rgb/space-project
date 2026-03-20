@@ -5,7 +5,6 @@ const DEFAULT_SUGGESTIONS = [
   "Which region is busiest?",
   "Summarise launches"
 ];
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 
 function normaliseMessage(message) {
   if (typeof message !== "string") {
@@ -93,7 +92,7 @@ function buildFallbackResponse(message, state) {
   let intent = "summary";
 
   if (!messageNormalised || /(hello|hi|hey|help)/.test(messageNormalised)) {
-    reply = "Mission assistant online. Gemini will answer when it is configured. Ask about collision risk, busiest regions, launches, incidents, or a satellite by name.";
+    reply = "Mission assistant online. Ask about collision risk, busiest regions, launches, incidents, or a satellite by name.";
     intent = "help";
   } else if (/(risk|collision|conflict|close|alert|danger)/.test(messageNormalised)) {
     if (conflicts.length) {
@@ -148,146 +147,11 @@ function buildFallbackResponse(message, state) {
     intent,
     suggestions: DEFAULT_SUGGESTIONS,
     context: buildContextPayload(state, conflicts),
-    source: "gemini-fallback"
+    source: "python-chatbot"
   };
 }
-
-function serialiseHistory(history) {
-  if (!Array.isArray(history)) {
-    return [];
-  }
-
-  return history.slice(-8).map((entry) => {
-    const text = String(entry?.content || "").trim();
-    if (!text) {
-      return null;
-    }
-
-    return {
-      role: entry?.role === "assistant" || entry?.role === "model" ? "model" : "user",
-      parts: [{ text }]
-    };
-  }).filter(Boolean);
-}
-
-function buildStateSummary(state, conflicts) {
-  const regions = buildRegionCounts(state.satellites || []);
-  const regionLines = Object.entries(regions)
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-    .slice(0, 6)
-    .map(([region, count]) => `${region}: ${count}`)
-    .join(", ") || "No active regions";
-
-  let topConflictLine = "No active conflicts.";
-  if (conflicts.length) {
-    const [firstSatellite, secondSatellite] = conflicts[0].satellites;
-    topConflictLine = `Top conflict: ${firstSatellite?.name || "Unknown"} vs ${secondSatellite?.name || "Unknown"} at ${formatPythonFloat(conflicts[0].distance_km)} km. Suggested altitude adjustment: ${conflicts[0].recommended_altitude_adjustment_km} km.`;
-  }
-
-  return [
-    "You are the Gemini mission assistant for an orbital traffic dashboard.",
-    "Answer only from the provided mission state.",
-    "Be concise, specific, and operationally useful.",
-    "If the data does not support something, say that clearly.",
-    "Do not invent satellites, launches, incidents, or measurements.",
-    "",
-    `Selected satellite id: ${state.selectedSatelliteId || "None"}`,
-    `Tracked satellites: ${state.satellites.length}`,
-    `Future launches: ${state.launches.length}`,
-    `Incidents: ${state.catastrophes.length}`,
-    `Active conflicts: ${conflicts.length}`,
-    `Region distribution: ${regionLines}`,
-    topConflictLine
-  ].join("\n");
-}
-
-function extractGeminiText(payload) {
-  const candidate = payload?.candidates?.[0];
-  if (!candidate) {
-    return "";
-  }
-
-  return (candidate.content?.parts || [])
-    .map((part) => part?.text || "")
-    .join("\n")
-    .trim();
-}
-
-async function generateGeminiResponse(message, state, history, env) {
-  const apiKey = String(env?.GEMINI_API_KEY || "").trim();
-  if (!apiKey) {
-    return null;
-  }
-
-  const model = String(env?.GEMINI_MODEL || DEFAULT_GEMINI_MODEL).trim() || DEFAULT_GEMINI_MODEL;
-  const conflicts = detectConflicts(state.satellites || []);
-  let response;
-  try {
-    response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-          "x-goog-api-client": "space-project-chatbot/1.0"
-        },
-        body: JSON.stringify({
-          system_instruction: {
-            parts: [{ text: buildStateSummary(state, conflicts) }]
-          },
-          contents: [
-            ...serialiseHistory(history),
-            {
-              role: "user",
-              parts: [{ text: message }]
-            }
-          ],
-          generation_config: {
-            temperature: 0,
-            max_output_tokens: 400
-          }
-        })
-      }
-    );
-  } catch (error) {
-    return null;
-  }
-
-  if (!response.ok) {
-    return null;
-  }
-
-  let payload;
-  try {
-    payload = await response.json();
-  } catch (error) {
-    return null;
-  }
-
-  const text = extractGeminiText(payload);
-  if (!text) {
-    return null;
-  }
-
-  return {
-    ok: true,
-    reply: text,
-    intent: "gemini",
-    suggestions: DEFAULT_SUGGESTIONS,
-    context: buildContextPayload(state, conflicts),
-    source: "gemini-chatbot",
-    model
-  };
-}
-
-async function generateChatResponse(message, candidateState, history, env) {
+function generateChatResponse(message, candidateState) {
   const state = processState(candidateState);
-  const geminiResponse = await generateGeminiResponse(message, state, history, env);
-  if (geminiResponse) {
-    return geminiResponse;
-  }
-
   return buildFallbackResponse(message, state);
 }
 
@@ -313,12 +177,7 @@ export async function onRequest(context) {
 
     const payload = await context.request.json();
     return jsonResponse(
-      await generateChatResponse(
-        payload.message,
-        payload.state,
-        payload.history,
-        context.env
-      )
+      generateChatResponse(payload.message, payload.state)
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "The chat API failed.";

@@ -1,33 +1,63 @@
-# space project
+# Space Mission Control
 
-This is a hackathon project for orbital traffic monitoring with an HTML/CSS/JS frontend, a local Python backend, and a Cloudflare Pages deployment path.
+Multi-page orbital traffic operations dashboard built for Vercel with:
 
-## Local run
+- shared mission state stored in Supabase
+- read-only user monitoring page
+- password-protected administrator control room
+- NASA intelligence feed
+- Gemini-powered mission assistant through Google
 
-```powershell
-cd c:\Users\moham\Desktop\space
-node server.js
-```
+## Pages
 
-Open `http://127.0.0.1:8080`.
+- `/` landing page
+- `/monitor` read-only user dashboard
+- `/intelligence` NASA + Gemini intelligence page
+- `/admin` administrator-only editing page
 
-## Gemini chatbot configuration
+## Environment variables
 
-The chatbot now supports Gemini through the official Gemini API. If `GEMINI_API_KEY` is not configured, it falls back to the built-in mission assistant logic.
+Copy `.env.example` into your Vercel project or local `.env` file and set:
 
-### Local Node + Python run
-
-```powershell
-$env:GEMINI_API_KEY="your_gemini_api_key"
-$env:GEMINI_MODEL="gemini-2.5-flash"
-node server.js
-```
-
-### Cloudflare Pages
-
-Set the following environment variables or secrets in the Pages project:
-
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `ADMIN_PASSWORD`
+- `ADMIN_SESSION_SECRET`
+- `NASA_API_KEY`
 - `GEMINI_API_KEY`
-- `GEMINI_MODEL` with value `gemini-2.5-flash` unless you want a different Gemini model
+- `GEMINI_MODEL`
 
-For local `wrangler pages dev`, you can use a `.dev.vars` file.
+## Supabase setup
+
+Run the SQL in `supabase/schema.sql` in your Supabase SQL editor.
+
+That creates:
+
+- `mission_snapshots` for the shared JSON mission state
+- `mission_audit_log` for recent administrator actions
+
+## Local development
+
+```powershell
+cd C:\Users\moham\Desktop\space
+cmd /c npm.cmd install
+cmd /c npx.cmd vercel dev
+```
+
+Open:
+
+- `http://127.0.0.1:3000/`
+
+## Deploy to Vercel
+
+1. Push this repository to GitHub.
+2. Import the repo into Vercel.
+3. Add the environment variables from `.env.example`.
+4. Run the SQL from `supabase/schema.sql`.
+5. Deploy.
+
+## Notes
+
+- Administrator updates are enforced through the `/api/admin-session` password gate and `/api/state` write protection.
+- All users see the same shared mission state because reads and writes go through the Supabase-backed Vercel API.
+- If Supabase env vars are missing, the API falls back to in-memory storage for local development only.

@@ -135,8 +135,7 @@ class StateRequestHandler(BaseHTTPRequestHandler):
 
         message = payload.get("message", "")
         candidate_state = payload.get("state", state_storage)
-        history = payload.get("history", [])
-        self._send_json(generate_chat_response(message, candidate_state, history))
+        self._send_json(generate_chat_response(message, candidate_state))
 
     def log_message(self, format_string, *args):
         print(f"[python-backend] {format_string % args}", flush=True)

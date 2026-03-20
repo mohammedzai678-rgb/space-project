@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intelligence | Space Mission Control</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="intelligence">
+  <div class="app-shell">
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">NASA + Gemini</p>
+        <h1 class="site-title">Mission Intelligence Desk</h1>
+      </div>
+      <nav class="site-nav">
+        <a class="nav-pill" href="/">Home</a>
+        <a class="nav-pill" href="/monitor">User Monitor</a>
+        <a class="nav-pill active" href="/intelligence">Intelligence</a>
+        <a class="nav-pill" href="/admin">Admin</a>
+      </nav>
+    </header>
+
+    <main class="page-grid">
+      <section class="hero-banner">
+        <div class="hero-copy">
+          <p class="eyebrow">Space Intelligence</p>
+          <h2>External NASA context plus Gemini mission analysis</h2>
+          <p class="hero-text">
+            This page combines the shared mission state with NASA open data and a Gemini-powered
+            mission assistant running server-side through Vercel.
+          </p>
+          <p id="intel-status" class="form-note">Loading intelligence feeds...</p>
+        </div>
+        <div id="state-summary" class="overview-cards"></div>
+      </section>
+
+      <section class="content-grid two-up">
+        <section id="apod-card" class="panel media-panel"></section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Gemini</p>
+              <h2>Mission Assistant</h2>
+            </div>
+          </div>
+          <div id="chat-thread" class="chatbot-thread"></div>
+          <form id="chat-form" class="chatbot-form">
+            <label>
+              <span>Ask the mission assistant</span>
+              <textarea id="chat-input" rows="4" placeholder="Which satellite is the highest collision risk right now?"></textarea>
+            </label>
+            <button id="chat-send" class="primary-btn" type="submit">Send to Gemini</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">NASA NEO Feed</p>
+              <h2>Near-Earth Objects</h2>
+            </div>
+          </div>
+          <div id="neo-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Audit</p>
+              <h2>Recent Admin Changes</h2>
+            </div>
+          </div>
+          <div id="intel-audit-list" class="stack-list"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/scripts/intelligence.js"></script>
+</body>
+</html>

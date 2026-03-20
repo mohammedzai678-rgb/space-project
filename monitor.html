@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Monitor | Space Mission Control</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="monitor">
+  <div class="app-shell">
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">Read-Only Operations</p>
+        <h1 class="site-title">User Mission Monitor</h1>
+      </div>
+      <nav class="site-nav">
+        <a class="nav-pill" href="/">Home</a>
+        <a class="nav-pill active" href="/monitor">User Monitor</a>
+        <a class="nav-pill" href="/intelligence">Intelligence</a>
+        <a class="nav-pill" href="/admin">Admin</a>
+      </nav>
+    </header>
+
+    <main class="page-grid">
+      <section class="hero-banner">
+        <div class="hero-copy">
+          <p class="eyebrow">Shared State</p>
+          <h2>Live orbital operations for all users</h2>
+          <p class="hero-text">
+            This page is view-only. Administrators update the shared mission state from the admin page,
+            and the monitor refreshes automatically for everyone else.
+          </p>
+          <p id="page-status" class="form-note">Connecting to the shared workspace...</p>
+          <p class="form-note">Last synced: <span id="last-updated">Loading...</span></p>
+        </div>
+        <div class="hero-stats">
+          <article class="metric-card">
+            <span id="metric-total">0</span>
+            <p>Tracked Satellites</p>
+          </article>
+          <article class="metric-card">
+            <span id="metric-crowded">0</span>
+            <p>Crowded Regions</p>
+          </article>
+          <article class="metric-card">
+            <span id="metric-alerts">0</span>
+            <p>Live Alerts</p>
+          </article>
+          <div id="recent-events" class="stack-list"></div>
+        </div>
+      </section>
+
+      <section class="hero-banner">
+        <div class="globe-card">
+          <canvas id="globe-canvas" class="globe-canvas" width="720" height="720"></canvas>
+          <div id="globe-tooltip" class="globe-tooltip hidden" aria-hidden="true"></div>
+          <p id="globe-status" class="form-note">Loading globe geometry...</p>
+        </div>
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Selected Unit</p>
+              <h2>Satellite Inspector</h2>
+            </div>
+          </div>
+          <div id="selected-satellite-card" class="selected-card"></div>
+        </section>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Mission Summary</p>
+            <h2>Operational Snapshot</h2>
+          </div>
+        </div>
+        <div id="overview-cards" class="overview-cards"></div>
+      </section>
+
+      <section class="content-grid two-up">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Regions</p>
+              <h2>Region Traffic</h2>
+            </div>
+          </div>
+          <div id="region-chart" class="bar-chart"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Distances</p>
+              <h2>Nearby Satellites</h2>
+            </div>
+          </div>
+          <div id="distance-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Congestion</p>
+              <h2>Region Pressure</h2>
+            </div>
+          </div>
+          <div id="crowding-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Risk</p>
+              <h2>Collision Watch</h2>
+            </div>
+          </div>
+          <div id="risk-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Traffic Pattern</p>
+              <h2>Busiest Regions</h2>
+            </div>
+          </div>
+          <p id="timeline-summary" class="timeline-summary"></p>
+          <div id="timeline-chart" class="stack-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Launch Queue</p>
+              <h2>Future Launches</h2>
+            </div>
+          </div>
+          <div id="launch-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Incident Watch</p>
+              <h2>Mission Incidents</h2>
+            </div>
+          </div>
+          <div id="catastrophe-list" class="stack-list"></div>
+        </section>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Registry</p>
+            <h2>All Satellite Details</h2>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Operator</th>
+                <th>Mission</th>
+                <th>Region</th>
+                <th>Altitude</th>
+                <th>Status</th>
+                <th>Risk</th>
+              </tr>
+            </thead>
+            <tbody id="satellite-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/vendor/d3-array.min.js"></script>
+  <script src="/vendor/d3-geo.min.js"></script>
+  <script src="/vendor/topojson-client.min.js"></script>
+  <script type="module" src="/scripts/monitor.js"></script>
+</body>
+</html>

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin | Space Mission Control</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="admin">
+  <div class="app-shell">
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">Restricted Control</p>
+        <h1 class="site-title">Administrator Control Room</h1>
+      </div>
+      <nav class="site-nav">
+        <a class="nav-pill" href="/">Home</a>
+        <a class="nav-pill" href="/monitor">User Monitor</a>
+        <a class="nav-pill" href="/intelligence">Intelligence</a>
+        <a class="nav-pill active" href="/admin">Admin</a>
+      </nav>
+    </header>
+
+    <main class="page-grid">
+      <section class="hero-banner">
+        <div class="hero-copy">
+          <p class="eyebrow">Protected Access</p>
+          <h2>Only administrators can change the shared mission state</h2>
+          <p class="hero-text">
+            Satellite registry updates, launch scheduling, incident logging, and theme changes are all
+            restricted to the password-protected control room.
+          </p>
+          <p id="admin-status" class="form-note">Administrator session required.</p>
+        </div>
+        <section class="panel access-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Login</p>
+              <h2>Administrator Password</h2>
+            </div>
+          </div>
+          <form id="admin-auth-form" class="stack-form">
+            <label>
+              <span>Password</span>
+              <input id="admin-password" type="password" autocomplete="current-password" placeholder="Enter admin password">
+            </label>
+            <button class="primary-btn" type="submit">Unlock Control Room</button>
+          </form>
+          <p id="admin-auth-note" class="form-note">Checking configuration...</p>
+          <button id="admin-logout" class="secondary-btn" type="button" hidden>Log Out</button>
+        </section>
+      </section>
+
+      <section id="admin-panels" class="page-grid" hidden>
+        <section class="content-grid two-up">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Theme</p>
+                <h2>Workspace Appearance</h2>
+              </div>
+            </div>
+            <form id="theme-form" class="stack-form">
+              <label>
+                <span>Theme</span>
+                <select id="theme-select">
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                </select>
+              </label>
+              <button class="primary-btn" type="submit">Save Theme</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Audit</p>
+                <h2>Recent Changes</h2>
+              </div>
+            </div>
+            <div id="audit-list" class="stack-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Satellite Entry</p>
+                <h2>Add or Update Satellite</h2>
+              </div>
+            </div>
+            <form id="satellite-form" class="stack-form">
+              <div class="field-grid">
+                <label><span>Satellite name</span><input id="sat-name" type="text" required placeholder="Aurora Net-7"></label>
+                <label><span>Operator</span><input id="sat-operator" type="text" required placeholder="Orbital Dynamics"></label>
+                <label><span>Latitude</span><input id="sat-lat" type="number" step="0.01" required placeholder="12.50"></label>
+                <label><span>Longitude</span><input id="sat-lon" type="number" step="0.01" required placeholder="78.30"></label>
+                <label><span>Altitude (km)</span><input id="sat-alt" type="number" required placeholder="540"></label>
+                <label><span>Velocity (km/s)</span><input id="sat-velocity" type="number" step="0.01" required placeholder="7.65"></label>
+                <label><span>Status</span><select id="sat-status"></select></label>
+                <label><span>Inclination (deg)</span><input id="sat-inclination" type="number" step="0.1" required placeholder="53.2"></label>
+                <label class="field-span-2"><span>Mission type</span><select id="sat-mission"></select></label>
+              </div>
+              <button class="primary-btn" type="submit">Save Satellite</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Launch Entry</p>
+                <h2>Add Future Launch</h2>
+              </div>
+            </div>
+            <form id="launch-form" class="stack-form">
+              <div class="field-grid">
+                <label><span>Satellite name</span><input id="launch-name" type="text" required placeholder="Aurora Net-8"></label>
+                <label><span>Operator</span><input id="launch-operator" type="text" required placeholder="Orbital Dynamics"></label>
+                <label><span>Launch date</span><input id="launch-date" type="date" required></label>
+                <label><span>Launch site</span><input id="launch-site" type="text" required placeholder="Sriharikota"></label>
+                <label><span>Region</span><select id="launch-region"></select></label>
+                <label><span>Mission type</span><select id="launch-mission"></select></label>
+              </div>
+              <button class="primary-btn" type="submit">Save Launch</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Incident Entry</p>
+                <h2>Log Catastrophe or Incident</h2>
+              </div>
+            </div>
+            <form id="catastrophe-form" class="stack-form">
+              <div class="field-grid">
+                <label><span>Event name</span><input id="catastrophe-name" type="text" required placeholder="Debris Fragmentation Event"></label>
+                <label><span>Date</span><input id="catastrophe-date" type="date" required></label>
+                <label><span>Type</span><select id="catastrophe-type"></select></label>
+                <label><span>Severity</span>
+                  <select id="catastrophe-severity">
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                </label>
+                <label class="field-span-2"><span>Notes</span><textarea id="catastrophe-notes" rows="5" required placeholder="Describe the event and its impact."></textarea></label>
+              </div>
+              <button class="primary-btn" type="submit">Save Incident</button>
+            </form>
+          </section>
+        </section>
+
+        <section class="content-grid two-up">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Shared Registry</p>
+                <h2>Satellites</h2>
+              </div>
+            </div>
+            <div id="admin-satellite-list" class="stack-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Shared Queue</p>
+                <h2>Launches</h2>
+              </div>
+            </div>
+            <div id="admin-launch-list" class="stack-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Shared Incidents</p>
+                <h2>Catastrophes</h2>
+              </div>
+            </div>
+            <div id="admin-catastrophe-list" class="stack-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Alerts</p>
+                <h2>Change Alerts</h2>
+              </div>
+              <button id="clear-change-alerts" class="secondary-btn" type="button">Clear Alerts</button>
+            </div>
+            <div id="admin-change-list" class="stack-list"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/scripts/admin.js"></script>
+</body>
+</html>

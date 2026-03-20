@@ -8,6 +8,7 @@ __pycache__/
 .dev.vars
 .dev.vars.*
 node_modules/
+.vercel/
 .wrangler/
 .DS_Store
 Thumbs.db

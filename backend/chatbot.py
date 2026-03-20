@@ -1,8 +1,3 @@
-import json
-import os
-import urllib.error
-import urllib.request
-
 from optimizer import detect_conflicts
 from traffic_engine import process_state
 
@@ -11,11 +6,6 @@ DEFAULT_SUGGESTIONS = [
     "Which region is busiest?",
     "Summarise launches",
 ]
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
-GEMINI_API_URL_TEMPLATE = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "{model}:generateContent"
-)
 
 
 def _normalise_message(message):
@@ -141,7 +131,7 @@ def _build_fallback_response(message, state):
         or any(word in message_normalised for word in ("hello", "hi", "hey", "help"))
     ):
         reply = (
-            "Mission assistant online. Gemini will answer when it is configured. "
+            "Mission assistant online. "
             "Ask about collision risk, busiest regions, launches, incidents, or "
             "a satellite by name."
         )
@@ -234,141 +224,8 @@ def _build_fallback_response(message, state):
         "intent": intent,
         "suggestions": DEFAULT_SUGGESTIONS,
         "context": _build_context_payload(state, conflicts),
-        "source": "gemini-fallback",
+        "source": "python-chatbot",
     }
-
-
-def _serialise_history(history):
-    if not isinstance(history, list):
-        return []
-
-    contents = []
-    for entry in history[-8:]:
-        if not isinstance(entry, dict):
-            continue
-
-        text = str(entry.get("content", "")).strip()
-        if not text:
-            continue
-
-        role = entry.get("role")
-        model_role = "model" if role in ("assistant", "model") else "user"
-        contents.append({
-            "role": model_role,
-            "parts": [{"text": text}],
-        })
-
-    return contents
-
-
-def _build_state_summary(state, conflicts):
-    satellites = state.get("satellites", [])
-    launches = state.get("launches", [])
-    catastrophes = state.get("catastrophes", [])
-    regions = _build_region_counts(satellites)
-    region_lines = ", ".join(
-        f"{region}: {count}" for region, count in sorted(regions.items(), key=lambda item: (-item[1], item[0]))[:6]
-    ) or "No active regions"
-    selected_id = state.get("selectedSatelliteId") or "None"
-
-    top_conflict_line = "No active conflicts."
-    if conflicts:
-        top_conflict = conflicts[0]
-        first_satellite, second_satellite = top_conflict["satellites"]
-        top_conflict_line = (
-            f"Top conflict: {first_satellite.get('name', 'Unknown')} vs "
-            f"{second_satellite.get('name', 'Unknown')} at "
-            f"{top_conflict['distance_km']} km. Suggested altitude adjustment: "
-            f"{top_conflict['recommended_altitude_adjustment_km']} km."
-        )
-
-    return (
-        "You are the Gemini mission assistant for an orbital traffic dashboard. "
-        "Answer only from the provided mission state. Be concise, specific, and "
-        "operationally useful. If the data does not support something, say that "
-        "clearly. Do not invent satellites, launches, incidents, or measurements.\n\n"
-        f"Selected satellite id: {selected_id}\n"
-        f"Tracked satellites: {len(satellites)}\n"
-        f"Future launches: {len(launches)}\n"
-        f"Incidents: {len(catastrophes)}\n"
-        f"Active conflicts: {len(conflicts)}\n"
-        f"Region distribution: {region_lines}\n"
-        f"{top_conflict_line}"
-    )
-
-
-def _extract_gemini_text(payload):
-    candidates = payload.get("candidates", [])
-    if not candidates:
-        return ""
-
-    parts = candidates[0].get("content", {}).get("parts", [])
-    text_parts = [part.get("text", "").strip() for part in parts if part.get("text")]
-    return "\n".join(text_parts).strip()
-
-
-def _generate_gemini_response(message, state, history):
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        return None
-
-    model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
-    conflicts = detect_conflicts(state.get("satellites", []))
-    request_payload = {
-        "system_instruction": {
-            "parts": [{"text": _build_state_summary(state, conflicts)}]
-        },
-        "contents": _serialise_history(history) + [{
-            "role": "user",
-            "parts": [{"text": message}],
-        }],
-        "generation_config": {
-            "temperature": 0,
-            "max_output_tokens": 400,
-        },
-    }
-    request_data = json.dumps(request_payload).encode("utf-8")
-    request = urllib.request.Request(
-        GEMINI_API_URL_TEMPLATE.format(model=model),
-        data=request_data,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key,
-            "x-goog-api-client": "space-project-chatbot/1.0",
-        },
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=25) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (
-        OSError,
-        urllib.error.URLError,
-        urllib.error.HTTPError,
-        json.JSONDecodeError,
-    ):
-        return None
-
-    text = _extract_gemini_text(payload)
-    if not text:
-        return None
-
-    return {
-        "ok": True,
-        "reply": text,
-        "intent": "gemini",
-        "suggestions": DEFAULT_SUGGESTIONS,
-        "context": _build_context_payload(state, conflicts),
-        "source": "gemini-chatbot",
-        "model": model,
-    }
-
-
-def generate_chat_response(message, candidate_state, history=None):
+def generate_chat_response(message, candidate_state):
     state = process_state(candidate_state)
-    gemini_response = _generate_gemini_response(message, state, history or [])
-    if gemini_response:
-        return gemini_response
-
     return _build_fallback_response(message, state)

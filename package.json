@@ -1,0 +1,16 @@
+{
+  "name": "space-project",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "@google/genai": "^1.46.0",
+    "@supabase/supabase-js": "^2.99.3"
+  },
+  "devDependencies": {
+    "vercel": "^50.34.2"
+  }
+}

@@ -123,7 +123,7 @@ const chatbotState = {
   messages: [
     {
       role: "assistant",
-      content: "Mission assistant online. Gemini will answer when it is configured. Ask about collision risk, busy regions, launches, incidents, or a satellite by name.",
+      content: "Mission assistant online. Ask about collision risk, busy regions, launches, incidents, or a satellite by name.",
       suggestions: ["Show collision risk", "Which region is busiest?", "Summarise launches"]
     }
   ]
@@ -287,15 +287,6 @@ function createChatMessage(role, content, suggestions = []) {
   };
 }
 
-function getChatHistoryPayload() {
-  return chatbotState.messages
-    .slice(-8)
-    .map((message) => ({
-      role: message.role,
-      content: message.content
-    }));
-}
-
 function renderChatbot() {
   if (!chatbotThread) {
     return;
@@ -320,7 +311,7 @@ function renderChatbot() {
   if (chatbotStatus) {
     chatbotStatus.textContent = chatbotState.sending
       ? "Mission assistant is analysing the current orbital state..."
-      : "The chatbot uses Gemini when GEMINI_API_KEY is configured and always includes the current mission state.";
+      : "The chatbot uses the current mission state and Python backend analysis.";
   }
 
   if (chatbotSendButton) {
@@ -335,7 +326,6 @@ async function sendChatPrompt(prompt) {
     return;
   }
 
-  const history = getChatHistoryPayload();
   chatbotState.messages.push(createChatMessage("user", trimmedPrompt));
   chatbotState.sending = true;
   renderChatbot();
@@ -349,8 +339,7 @@ async function sendChatPrompt(prompt) {
       },
       body: JSON.stringify({
         message: trimmedPrompt,
-        state: getSerializableState(),
-        history
+        state: getSerializableState()
       })
     });
 
