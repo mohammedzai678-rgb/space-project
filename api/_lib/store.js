@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { neon } from "@neondatabase/serverless";
 import { createDefaultState, processState } from "../../shared/mission-core.js";
 
 const SNAPSHOT_ID = "global";
@@ -31,20 +31,38 @@ function getMemoryStore() {
   return globalThis.__spaceMissionStore;
 }
 
-function getSupabaseServerClient() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+function getDatabaseUrl() {
+  return (
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.NEON_DATABASE_URL ||
+    ""
+  );
+}
 
-  if (!url || !key) {
+function getNeonSql() {
+  const databaseUrl = getDatabaseUrl();
+  if (!databaseUrl) {
     return null;
   }
 
-  return createClient(url, key, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
+  return neon(databaseUrl);
+}
+
+function parseJsonValue(value, fallback = {}) {
+  if (!value) {
+    return fallback;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch (error) {
+      return fallback;
     }
-  });
+  }
+
+  return value;
 }
 
 function buildAuditDetails(state, details = {}) {
@@ -58,22 +76,51 @@ function buildAuditDetails(state, details = {}) {
   };
 }
 
-async function ensureSupabaseSnapshot(client) {
-  const { data, error } = await client
-    .from("mission_snapshots")
-    .select("id, state_json, updated_at, updated_by")
-    .eq("id", SNAPSHOT_ID)
-    .maybeSingle();
+async function ensureNeonSchema(sql) {
+  if (!globalThis.__spaceMissionSchemaPromise) {
+    globalThis.__spaceMissionSchemaPromise = (async () => {
+      await sql`
+        create table if not exists mission_snapshots (
+          id text primary key,
+          state_json jsonb not null,
+          updated_at timestamptz not null default timezone('utc', now()),
+          updated_by text not null default 'bootstrap'
+        )
+      `;
 
-  if (error) {
-    throw error;
+      await sql`
+        create table if not exists mission_audit_log (
+          id bigint generated always as identity primary key,
+          action text not null,
+          actor text not null,
+          details jsonb not null default '{}'::jsonb,
+          created_at timestamptz not null default timezone('utc', now())
+        )
+      `;
+    })().catch((error) => {
+      globalThis.__spaceMissionSchemaPromise = null;
+      throw error;
+    });
   }
 
-  if (data) {
+  await globalThis.__spaceMissionSchemaPromise;
+}
+
+async function ensureNeonSnapshot(sql) {
+  await ensureNeonSchema(sql);
+
+  const rows = await sql`
+    select id, state_json, updated_at, updated_by
+    from mission_snapshots
+    where id = ${SNAPSHOT_ID}
+    limit 1
+  `;
+
+  if (rows.length) {
     return {
-      state: processState(data.state_json),
-      updatedAt: data.updated_at,
-      updatedBy: data.updated_by
+      state: processState(parseJsonValue(rows[0].state_json, createDefaultState())),
+      updatedAt: rows[0].updated_at,
+      updatedBy: rows[0].updated_by
     };
   }
 
@@ -84,33 +131,36 @@ async function ensureSupabaseSnapshot(client) {
 }
 
 export async function readMissionState() {
-  const client = getSupabaseServerClient();
-  if (!client) {
+  const sql = getNeonSql();
+  if (!sql) {
     const store = getMemoryStore();
     return store.snapshot;
   }
 
-  return ensureSupabaseSnapshot(client);
+  return ensureNeonSnapshot(sql);
 }
 
 export async function readAuditLog(limit = 20) {
-  const client = getSupabaseServerClient();
-  if (!client) {
+  const sql = getNeonSql();
+  if (!sql) {
     const store = getMemoryStore();
     return store.audit.slice(0, limit);
   }
 
-  const { data, error } = await client
-    .from("mission_audit_log")
-    .select("id, action, actor, details, created_at")
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  await ensureNeonSchema(sql);
+  const boundedLimit = Math.max(1, Math.min(100, Number(limit) || 20));
 
-  if (error) {
-    throw error;
-  }
+  const rows = await sql`
+    select id, action, actor, details, created_at
+    from mission_audit_log
+    order by created_at desc
+    limit ${boundedLimit}
+  `;
 
-  return data;
+  return rows.map((row) => ({
+    ...row,
+    details: parseJsonValue(row.details, {})
+  }));
 }
 
 export async function writeMissionState(candidateState, options = {}) {
@@ -118,10 +168,10 @@ export async function writeMissionState(candidateState, options = {}) {
   const action = options.action || "state.update";
   const state = processState(candidateState);
   const auditDetails = buildAuditDetails(state, options.details);
-  const client = getSupabaseServerClient();
+  const sql = getNeonSql();
   const updatedAt = new Date().toISOString();
 
-  if (!client) {
+  if (!sql) {
     const store = getMemoryStore();
     store.snapshot = {
       state,
@@ -139,36 +189,27 @@ export async function writeMissionState(candidateState, options = {}) {
     return store.snapshot;
   }
 
-  const { data, error } = await client
-    .from("mission_snapshots")
-    .upsert({
-      id: SNAPSHOT_ID,
-      state_json: state,
-      updated_at: updatedAt,
-      updated_by: actor
-    })
-    .select("state_json, updated_at, updated_by")
-    .single();
+  await ensureNeonSchema(sql);
 
-  if (error) {
-    throw error;
-  }
+  const rows = await sql`
+    insert into mission_snapshots (id, state_json, updated_at, updated_by)
+    values (${SNAPSHOT_ID}, ${JSON.stringify(state)}::jsonb, ${updatedAt}::timestamptz, ${actor})
+    on conflict (id)
+    do update set
+      state_json = excluded.state_json,
+      updated_at = excluded.updated_at,
+      updated_by = excluded.updated_by
+    returning state_json, updated_at, updated_by
+  `;
 
-  const { error: auditError } = await client
-    .from("mission_audit_log")
-    .insert({
-      action,
-      actor,
-      details: auditDetails
-    });
-
-  if (auditError) {
-    throw auditError;
-  }
+  await sql`
+    insert into mission_audit_log (action, actor, details)
+    values (${action}, ${actor}, ${JSON.stringify(auditDetails)}::jsonb)
+  `;
 
   return {
-    state: processState(data.state_json),
-    updatedAt: data.updated_at,
-    updatedBy: data.updated_by
+    state: processState(parseJsonValue(rows[0]?.state_json, state)),
+    updatedAt: rows[0]?.updated_at || updatedAt,
+    updatedBy: rows[0]?.updated_by || actor
   };
 }

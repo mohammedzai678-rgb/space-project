@@ -583,7 +583,7 @@ async function refreshState() {
   setLastUpdated(payload.meta?.updatedAt);
   setStatus(payload.meta?.access === "admin"
     ? "Viewer dashboard synced. Administrator controls are available on the admin page."
-    : "Viewer dashboard synced from the shared Supabase mission state.");
+    : "Viewer dashboard synced from the shared Neon mission state.");
   render();
 }
 

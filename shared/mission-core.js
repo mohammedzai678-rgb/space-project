@@ -71,6 +71,12 @@ function roundTo(value, digits = 2) {
   return Number(Number(value).toFixed(digits));
 }
 
+function getIsoDateOffset(daysFromToday) {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + daysFromToday);
+  return date.toISOString().slice(0, 10);
+}
+
 function formatPythonFloat(value) {
   return Number.isInteger(value) ? value.toFixed(1) : String(value);
 }
@@ -80,14 +86,96 @@ function escapeRegExp(text) {
 }
 
 export function createDefaultState() {
+  const satellites = [
+    {
+      id: "SAT-1001",
+      name: "Aurora Net-7",
+      operator: "Orbital Dynamics",
+      latitude: 12.5,
+      longitude: 78.3,
+      altitude: 540,
+      velocity: 7.65,
+      status: "Operational",
+      inclination: 53.2,
+      mission: "Communication"
+    },
+    {
+      id: "SAT-1002",
+      name: "Horizon Watch-2",
+      operator: "Orbital Dynamics",
+      latitude: 12.88,
+      longitude: 78.94,
+      altitude: 548,
+      velocity: 7.63,
+      status: "Monitoring",
+      inclination: 53.6,
+      mission: "Observation"
+    },
+    {
+      id: "SAT-1003",
+      name: "Sentinel Mesh-1",
+      operator: "Celestial Defense",
+      latitude: 25.2,
+      longitude: 55.27,
+      altitude: 560,
+      velocity: 7.58,
+      status: "Operational",
+      inclination: 97.4,
+      mission: "Defense"
+    },
+    {
+      id: "SAT-1004",
+      name: "Polaris Relay-9",
+      operator: "Atlas Comms",
+      latitude: 37.77,
+      longitude: -122.42,
+      altitude: 535,
+      velocity: 7.67,
+      status: "Maintenance",
+      inclination: 51.9,
+      mission: "Navigation"
+    }
+  ];
+
   return {
-    nextId: 1001,
-    nextLaunchId: 1,
-    nextCatastropheId: 1,
-    selectedSatelliteId: null,
-    satellites: [],
-    launches: [],
-    catastrophes: [],
+    nextId: 1005,
+    nextLaunchId: 3,
+    nextCatastropheId: 2,
+    selectedSatelliteId: "SAT-1001",
+    satellites: satellites.map((satellite) => ({
+      ...satellite,
+      region: getWorldRegion(satellite.latitude, satellite.longitude)
+    })),
+    launches: [
+      {
+        id: "LAUNCH-1",
+        name: "Aurora Net-8",
+        operator: "Orbital Dynamics",
+        launchDate: getIsoDateOffset(9),
+        launchSite: "Satish Dhawan Space Centre",
+        region: "South Asia",
+        mission: "Communication"
+      },
+      {
+        id: "LAUNCH-2",
+        name: "Sentinel Mesh-2",
+        operator: "Celestial Defense",
+        launchDate: getIsoDateOffset(21),
+        launchSite: "Cape Canaveral",
+        region: "North America",
+        mission: "Defense"
+      }
+    ],
+    catastrophes: [
+      {
+        id: "EVENT-1",
+        name: "Debris Fragmentation Watch",
+        date: getIsoDateOffset(-4),
+        type: "Debris Field",
+        severity: "medium",
+        notes: "A fragmented object cluster is being tracked near the South Asia corridor."
+      }
+    ],
     changeAlerts: [],
     theme: "dark"
   };
@@ -335,7 +423,7 @@ export function processState(candidate) {
     ...state,
     changeAlerts: mergeChangeAlerts(state.changeAlerts, backendAlerts),
     backendInsights: {
-      engine: "supabase-shared",
+      engine: "neon-shared",
       conflictCount: conflicts.length
     }
   };

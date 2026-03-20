@@ -168,7 +168,7 @@ async function initialiseSession() {
   const authenticated = payload.authenticated;
 
   if (!configured) {
-    elements.authNote.textContent = "Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in Vercel before using the control room.";
+    elements.authNote.textContent = "Set DATABASE_URL, ADMIN_PASSWORD, and ADMIN_SESSION_SECRET in Vercel before using the control room.";
   } else {
     elements.authNote.textContent = authenticated
       ? "Administrator session is active."
