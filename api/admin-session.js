@@ -1,7 +1,7 @@
 import {
   clearAdminSessionCookie,
   createAdminSessionCookie,
-  getAdminPasswordConfigured,
+  getAdminSessionConfigured,
   isAdminRequest
 } from "./_lib/auth.js";
 import { handleOptions, readJsonBody, sendEmpty, sendJson } from "./_lib/http.js";
@@ -16,7 +16,7 @@ export default async function handler(req, res) {
       sendJson(res, 200, {
         ok: true,
         authenticated: isAdminRequest(req),
-        configured: getAdminPasswordConfigured()
+        configured: getAdminSessionConfigured()
       });
       return;
     }
@@ -30,12 +30,21 @@ export default async function handler(req, res) {
 
     if (req.method === "POST") {
       const payload = await readJsonBody(req);
+      const sessionConfigured = getAdminSessionConfigured();
       const configuredPassword = process.env.ADMIN_PASSWORD;
 
       if (!configuredPassword) {
         sendJson(res, 500, {
           ok: false,
           error: "ADMIN_PASSWORD is not configured."
+        });
+        return;
+      }
+
+      if (!sessionConfigured) {
+        sendJson(res, 500, {
+          ok: false,
+          error: "ADMIN_SESSION_SECRET is not configured."
         });
         return;
       }

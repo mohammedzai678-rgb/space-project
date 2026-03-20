@@ -7,6 +7,10 @@ function getSessionSecret() {
   return process.env.ADMIN_SESSION_SECRET || process.env.ADMIN_PASSWORD || "development-only-secret";
 }
 
+function isSecureCookieContext() {
+  return process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_URL);
+}
+
 function encodeBase64Url(value) {
   return Buffer.from(value, "utf8").toString("base64url");
 }
@@ -44,11 +48,12 @@ function parseCookieHeader(cookieHeader = "") {
 
 function buildCookie(value, expiresAt) {
   const expires = new Date(expiresAt).toUTCString();
-  return `${ADMIN_COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires}`;
+  const secureAttribute = isSecureCookieContext() ? "; Secure" : "";
+  return `${ADMIN_COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires}${secureAttribute}`;
 }
 
-export function getAdminPasswordConfigured() {
-  return Boolean(process.env.ADMIN_PASSWORD);
+export function getAdminSessionConfigured() {
+  return Boolean(process.env.ADMIN_PASSWORD && process.env.ADMIN_SESSION_SECRET);
 }
 
 export function createAdminSessionCookie() {
